@@ -577,8 +577,8 @@ def create_ui():
             primary_hue="blue",
             secondary_hue="slate",
             neutral_hue="slate",
-            font=gr.themes.GoogleFont("Inter"),
-            font_mono=gr.themes.GoogleFont("JetBrains Mono")
+            font=[gr.themes.GoogleFont("Inter"), "sans-serif"],
+            font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "monospace"]
         ),
         css=CUSTOM_CSS
     ) as app:
