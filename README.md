@@ -19,7 +19,7 @@ A production-ready, AI-powered media processing application designed for RunPod 
 
 ### 🎧 Audio Tools
 - **Noise reduction** with DeepFilterNet
-- **Stem separation** with Demucs (vocals, drums, bass, other)
+- **Stem separation** with Demucs (vocals, drums, bass, other,etc)
 - Memory-isolated subprocess execution
 
 ### 🛠️ FFmpeg Toolbox
