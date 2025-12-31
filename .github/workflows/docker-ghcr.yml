@@ -22,9 +22,12 @@ jobs:
         run: |
           set -euxo pipefail
           df -h
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          # Remove heavy pre-installed software
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup || true
+          # Clean apt
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
+          # Prune docker
           docker system prune -af || true
           df -h
 
@@ -59,5 +62,7 @@ jobs:
           sbom: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/whisperx-ui:latest
+          cache-to: type=gha,mode=min
