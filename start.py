@@ -264,7 +264,7 @@ def main():
             warnings.append(desc)
     
     # Check GPU
-    print("\n[GPU]")
+    print("\n[GPU & Acceleration]")
     try:
         import torch
         if torch.cuda.is_available():
@@ -277,6 +277,35 @@ def main():
     except Exception as e:
         print(f"  ⚠ GPU check failed: {e}")
         warnings.append("GPU")
+    
+    # Check Vulkan (required for Real-ESRGAN)
+    vulkan_ready = False
+    try:
+        # Check for vulkan library and at least one device
+        result = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            print("  ✓ Vulkan hardware acceleration available")
+            vulkan_ready = True
+        else:
+            # Fallback check for library only
+            result = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True)
+            if "libvulkan.so" in result.stdout:
+                print("  ✓ Vulkan library found (device check skipped)")
+                vulkan_ready = True
+            else:
+                print("  ⚠ Vulkan not found - Real-ESRGAN may fail")
+                warnings.append("Vulkan")
+    except Exception:
+        # If vulkan-utils not installed, check library directly
+        try:
+            import ctypes.util
+            if ctypes.util.find_library('vulkan'):
+                print("  ✓ Vulkan library found")
+                vulkan_ready = True
+            else:
+                print("  ⚠ Vulkan check skipped (utilities missing)")
+        except Exception:
+            pass
     
     # Check NVENC
     print("\n[Hardware Encoding]")

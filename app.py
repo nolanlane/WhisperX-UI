@@ -17,6 +17,16 @@ from typing import Optional, Tuple, List, Dict, Any
 import torch
 import gradio as gr
 
+# FIX: Monkey patch for BasicSR compatibility with torchvision >= 0.16
+# BasicSR expects torchvision.transforms.functional_tensor which was removed
+try:
+    import torchvision
+    import torchvision.transforms.functional as F
+    import sys
+    sys.modules['torchvision.transforms.functional_tensor'] = F
+except ImportError:
+    pass
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -382,6 +392,10 @@ def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = g
         out_dir = OUTPUT_DIR / f"enhanced_{ts}"
         out_dir.mkdir(exist_ok=True)
         
+        # Check if df-enhance is available
+        if shutil.which("df-enhance") is None:
+            raise gr.Error("DeepFilterNet (df-enhance) is not installed or not in PATH.")
+
         # DeepFilterNet CLI with post-filter for stronger attenuation
         cmd = ["df-enhance", "--output-dir", str(out_dir)]
         if attenuation > 0.7:
@@ -420,6 +434,11 @@ def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progr
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_dir = OUTPUT_DIR / f"stems_{ts}"
         
+        # Check if Demucs is available
+        import importlib.util
+        if importlib.util.find_spec("demucs") is None:
+            raise gr.Error("Demucs is not installed in the current environment.")
+
         result = subprocess.run([
             sys.executable, "-m", "demucs",
             "--out", str(out_dir), "-n", model, audio_file

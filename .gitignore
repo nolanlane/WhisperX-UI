@@ -54,3 +54,4 @@ Thumbs.db
 *.pem
 *.key
 .env.local
+logs.txt

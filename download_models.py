@@ -8,6 +8,16 @@ import sys
 import subprocess
 from pathlib import Path
 
+# FIX: Monkey patch for BasicSR compatibility with torchvision >= 0.16
+# BasicSR expects torchvision.transforms.functional_tensor which was removed
+try:
+    import torchvision
+    import torchvision.transforms.functional as F
+    import sys
+    sys.modules['torchvision.transforms.functional_tensor'] = F
+except ImportError:
+    pass
+
 # Paths - robust to local vs Docker
 BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
 MODELS_DIR = BASE_DIR / "models"
