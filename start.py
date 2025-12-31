@@ -8,6 +8,7 @@ import sys
 import subprocess
 from pathlib import Path
 
+
 # Paths - adjust for local vs Docker
 BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
 BIN_DIR = BASE_DIR / "bin"
@@ -35,6 +36,68 @@ def check_binary(name, cmd):
         return True
     except Exception:
         return False
+
+
+def _is_dir_nonempty(path: Path) -> bool:
+    try:
+        return path.exists() and any(path.iterdir())
+    except Exception:
+        return False
+
+
+def ensure_models_downloaded(base_dir: Path):
+    """Option 2 (slim image): download models on first run if missing."""
+    models_dir = base_dir / "models"
+    whisper_dir = models_dir / "whisper"
+
+    if _is_dir_nonempty(whisper_dir):
+        print("\n[Models]")
+        print("  ✓ Models already present; skipping download")
+        return
+
+    print("\n[Models]")
+    print("  ⏬ Models not found; downloading on first run (this may take a while)...")
+
+    downloader = base_dir / "download_models.py"
+    if not downloader.exists():
+        raise RuntimeError(f"download_models.py not found at {downloader}")
+
+    log_path = base_dir / "temp" / "model_download.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(log_path, "w", encoding="utf-8") as f:
+        proc = subprocess.run(
+            [sys.executable, str(downloader)],
+            cwd=str(base_dir),
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+    if proc.returncode != 0:
+        try:
+            tail = ""
+            with open(log_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+                tail = "".join(lines[-80:])
+        except Exception:
+            tail = "(failed to read model download log)"
+        raise RuntimeError(
+            "Model download failed on first run. "
+            f"See log at {log_path}.\n--- log tail ---\n{tail}"
+        )
+
+    if not _is_dir_nonempty(whisper_dir):
+        raise RuntimeError(
+            "Model download completed but Whisper models directory is still empty. "
+            f"Check {log_path}."
+        )
+
+    try:
+        log_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    print("  ✓ Model download complete")
 
 
 def main():
@@ -120,6 +183,13 @@ def main():
     print("=" * 55)
     print("\nStarting Universal Media Studio...")
     print("Access the UI at: http://localhost:7860\n")
+
+    # Option 2: download models on first run if missing
+    try:
+        ensure_models_downloaded(BASE_DIR)
+    except Exception as e:
+        print(f"\nFATAL: {e}")
+        sys.exit(1)
     
     # Import and run app
     from app import create_ui, APP_TITLE, DEVICE, HAS_NVENC
