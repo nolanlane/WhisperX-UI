@@ -41,6 +41,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     aria2 \
     unzip \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavfilter-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
+    libswscale-dev \
     libsndfile1 \
     libsndfile1-dev \
     libsox-dev \
