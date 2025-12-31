@@ -56,7 +56,21 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
     print("\n[Runtime Assets]")
     print("  ⏬ Downloading Real-ESRGAN binary...")
     try:
-        _run(["wget", "-q", "-O", str(zip_path), url], timeout=600)
+        # GitHub releases frequently redirect; curl -fL with retries is more reliable than wget.
+        _run(
+            [
+                "curl",
+                "-fL",
+                "--retry",
+                "5",
+                "--retry-delay",
+                "2",
+                "-o",
+                str(zip_path),
+                url,
+            ],
+            timeout=600,
+        )
         _run(["unzip", "-o", str(zip_path)], cwd=bin_dir, timeout=600)
         _run(["chmod", "+x", str(target)], timeout=30)
     finally:
@@ -266,10 +280,15 @@ def main():
     # Slim image strategy: acquire heavyweight runtime assets at pod startup.
     try:
         ensure_realesrgan_binary(BASE_DIR)
+    except Exception as e:
+        print(f"\nWARNING: Real-ESRGAN setup failed: {e}")
+        print("  The Visual Restoration (upscaling) feature will be unavailable until this is fixed.")
+
+    try:
         ensure_codeformer_repo(BASE_DIR)
     except Exception as e:
-        print(f"\nFATAL: {e}")
-        sys.exit(1)
+        print(f"\nWARNING: CodeFormer setup failed: {e}")
+        print("  The Face Restoration feature will be unavailable until this is fixed.")
 
     # Option 2: download models on first run if missing
     try:
