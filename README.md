@@ -64,18 +64,45 @@ python app.py
 ### Docker Build
 
 ```bash
-# Build the image (downloads all models at build time)
-docker build -t universal-media-studio .
+# Build the image locally
+docker build -t whisperx-ui .
 
 # Run the container
-docker run --gpus all -p 7860:7860 universal-media-studio
+# Note: in the slim image configuration, models will download on first run.
+docker run --gpus all -p 7860:7860 whisperx-ui
+```
+
+### GHCR (Recommended)
+
+The Docker image is published automatically on every push to `master` via GitHub Actions.
+
+**Image:**
+
+```text
+ghcr.io/nolanlane/whisperx-ui:latest
+```
+
+Pull and run:
+
+```bash
+docker pull ghcr.io/nolanlane/whisperx-ui:latest
+docker run --gpus all -p 7860:7860 ghcr.io/nolanlane/whisperx-ui:latest
 ```
 
 ### RunPod Deployment
 
-1. Create a new RunPod template with this Dockerfile
-2. Set the exposed port to `7860`
-3. Deploy - models are pre-cached for instant startup
+Use the published GHCR image:
+
+1. Create a new RunPod template
+2. Container image:
+   - `ghcr.io/nolanlane/whisperx-ui:latest`
+3. Set the exposed port to `7860`
+4. Deploy
+
+Notes:
+
+- The container will download models on first startup if they are not already present in `/app/models`.
+- For best experience, attach persistent storage so subsequent starts do not re-download models.
 
 ## Configuration
 
@@ -101,7 +128,8 @@ HF_HOME=/app/models/huggingface  # Model cache location
 ```
 WhisperX-UI/
 ├── app.py                 # Main Gradio application
-├── download_models.py     # Build-time model downloader
+├── start.py               # Startup validator + first-run model download
+├── download_models.py     # Model downloader (used on first run in slim image)
 ├── requirements.txt       # Python dependencies
 ├── Dockerfile            # Container configuration
 └── README.md             # This file
