@@ -46,7 +46,7 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
     bin_dir = target.parent
     bin_dir.mkdir(parents=True, exist_ok=True)
 
-    zip_name = "realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
+    zip_name = "realesrgan-ncnn-vulkan-v0.2.0-ubuntu.zip"
     url = (
         "https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/"
         + zip_name
@@ -56,21 +56,21 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
     print("\n[Runtime Assets]")
     print("  ⏬ Downloading Real-ESRGAN binary...")
     try:
-        # GitHub releases frequently redirect; curl -fL with retries is more reliable than wget.
-        _run(
-            [
+        try:
+            _run([
                 "curl",
-                "-fL",
+                "-L",
+                "-f",
                 "--retry",
-                "5",
+                "3",
                 "--retry-delay",
                 "2",
                 "-o",
                 str(zip_path),
                 url,
-            ],
-            timeout=600,
-        )
+            ], timeout=600)
+        except Exception:
+            _run(["wget", "-q", "-L", "-O", str(zip_path), url], timeout=600)
         _run(["unzip", "-o", str(zip_path)], cwd=bin_dir, timeout=600)
         _run(["chmod", "+x", str(target)], timeout=30)
     finally:
@@ -280,15 +280,10 @@ def main():
     # Slim image strategy: acquire heavyweight runtime assets at pod startup.
     try:
         ensure_realesrgan_binary(BASE_DIR)
-    except Exception as e:
-        print(f"\nWARNING: Real-ESRGAN setup failed: {e}")
-        print("  The Visual Restoration (upscaling) feature will be unavailable until this is fixed.")
-
-    try:
         ensure_codeformer_repo(BASE_DIR)
     except Exception as e:
-        print(f"\nWARNING: CodeFormer setup failed: {e}")
-        print("  The Face Restoration feature will be unavailable until this is fixed.")
+        print(f"\nFATAL: {e}")
+        sys.exit(1)
 
     # Option 2: download models on first run if missing
     try:
