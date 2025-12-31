@@ -94,27 +94,6 @@ RUN pip install torch==2.1.2 torchaudio==2.1.2 torchvision==0.16.2 \
 RUN pip install -r requirements.txt
 
 # =============================================================================
-# Clone CodeFormer Repository
-# =============================================================================
-RUN git clone https://github.com/sczhou/CodeFormer.git /app/CodeFormer \
-    && cd /app/CodeFormer \
-    && pip install -r requirements.txt \
-    && python basicsr/setup.py develop
-
-# =============================================================================
-# Download realesrgan-ncnn-vulkan binary
-# =============================================================================
-RUN mkdir -p /app/bin \
-    && cd /app/bin \
-    && wget -q https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip \
-    && unzip realesrgan-ncnn-vulkan-20220424-ubuntu.zip \
-    && chmod +x realesrgan-ncnn-vulkan \
-    && rm realesrgan-ncnn-vulkan-20220424-ubuntu.zip
-
-# Add binary to PATH
-ENV PATH="/app/bin:${PATH}"
-
-# =============================================================================
 # Copy Application Files
 # =============================================================================
 COPY download_models.py start.py app.py ./
@@ -142,6 +121,9 @@ ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
     python3-pip \
+    git \
+    wget \
+    unzip \
     ffmpeg \
     libsndfile1 \
     sox \
@@ -166,8 +148,6 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-COPY --from=builder /app/CodeFormer /app/CodeFormer
-COPY --from=builder /app/bin /app/bin
 COPY --from=builder /app/download_models.py /app/download_models.py
 COPY --from=builder /app/start.py /app/start.py
 COPY --from=builder /app/app.py /app/app.py

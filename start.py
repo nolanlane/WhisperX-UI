@@ -29,6 +29,85 @@ REQUIRED_PATHS = [
 ]
 
 
+def _run(cmd, *, cwd: Path | None = None, timeout: int | None = None):
+    subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        check=True,
+        timeout=timeout,
+    )
+
+
+def ensure_realesrgan_binary(base_dir: Path) -> None:
+    target = base_dir / "bin" / "realesrgan-ncnn-vulkan"
+    if target.exists():
+        return
+
+    bin_dir = target.parent
+    bin_dir.mkdir(parents=True, exist_ok=True)
+
+    zip_name = "realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
+    url = (
+        "https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/"
+        + zip_name
+    )
+    zip_path = bin_dir / zip_name
+
+    print("\n[Runtime Assets]")
+    print("  ⏬ Downloading Real-ESRGAN binary...")
+    try:
+        _run(["wget", "-q", "-O", str(zip_path), url], timeout=600)
+        _run(["unzip", "-o", str(zip_path)], cwd=bin_dir, timeout=600)
+        _run(["chmod", "+x", str(target)], timeout=30)
+    finally:
+        try:
+            zip_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    if not target.exists():
+        raise RuntimeError(f"Real-ESRGAN binary install failed; expected at {target}")
+    print("  ✓ Real-ESRGAN ready")
+
+
+def ensure_codeformer_repo(base_dir: Path) -> None:
+    repo_dir = base_dir / "CodeFormer"
+    marker = repo_dir / "inference_codeformer.py"
+    if marker.exists():
+        return
+
+    print("\n[Runtime Assets]")
+    print("  ⏬ Cloning CodeFormer repository...")
+    try:
+        if repo_dir.exists():
+            # If the directory exists but is incomplete/corrupt, remove it.
+            # This keeps startup idempotent and avoids half-installed repos.
+            import shutil
+
+            shutil.rmtree(repo_dir, ignore_errors=True)
+
+        _run(
+            [
+                "git",
+                "clone",
+                "--depth",
+                "1",
+                "https://github.com/sczhou/CodeFormer.git",
+                str(repo_dir),
+            ],
+            timeout=600,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to clone CodeFormer: {e}")
+
+    if not marker.exists():
+        raise RuntimeError(
+            "CodeFormer clone completed but expected entrypoint is missing: "
+            f"{marker}"
+        )
+    print("  ✓ CodeFormer repo ready")
+
+
 def check_binary(name, cmd):
     """Check if a binary is available and working."""
     try:
@@ -183,6 +262,14 @@ def main():
     print("=" * 55)
     print("\nStarting Universal Media Studio...")
     print("Access the UI at: http://localhost:7860\n")
+
+    # Slim image strategy: acquire heavyweight runtime assets at pod startup.
+    try:
+        ensure_realesrgan_binary(BASE_DIR)
+        ensure_codeformer_repo(BASE_DIR)
+    except Exception as e:
+        print(f"\nFATAL: {e}")
+        sys.exit(1)
 
     # Option 2: download models on first run if missing
     try:

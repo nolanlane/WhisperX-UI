@@ -276,24 +276,35 @@ def restore_video(
         final_dir = upscaled_dir
         
         # CodeFormer face restoration
-        if enable_face and CODEFORMER_DIR.exists():
-            progress(0.6, desc="Restoring faces with CodeFormer...")
+        if enable_face:
             cf_script = CODEFORMER_DIR / "inference_codeformer.py"
-            if cf_script.exists():
-                try:
-                    subprocess.run([
-                        sys.executable, str(cf_script),
-                        "-w", str(face_weight),
-                        "--input_path", str(upscaled_dir),
-                        "--output_path", str(restored_dir),
-                        "--bg_upsampler", "None"
-                    ], capture_output=True, check=True, cwd=str(CODEFORMER_DIR))
-                    
-                    cf_out = restored_dir / "final_results"
-                    if cf_out.exists() and any(cf_out.iterdir()):
-                        final_dir = cf_out
-                except:
-                    pass
+            if not cf_script.exists():
+                raise gr.Error(
+                    "Face restoration is enabled, but CodeFormer is not available in this environment. "
+                    "If you're running in Docker/RunPod, restart the pod so start.py can fetch CodeFormer."
+                )
+
+            progress(0.6, desc="Restoring faces with CodeFormer...")
+            try:
+                subprocess.run([
+                    sys.executable, str(cf_script),
+                    "-w", str(face_weight),
+                    "--input_path", str(upscaled_dir),
+                    "--output_path", str(restored_dir),
+                    "--bg_upsampler", "None"
+                ], capture_output=True, check=True, cwd=str(CODEFORMER_DIR))
+
+                cf_out = restored_dir / "final_results"
+                if cf_out.exists() and any(cf_out.iterdir()):
+                    final_dir = cf_out
+                else:
+                    raise gr.Error("CodeFormer completed but produced no output frames.")
+            except subprocess.CalledProcessError as e:
+                raise gr.Error(
+                    "CodeFormer failed. "
+                    f"stdout: {e.stdout}\n"
+                    f"stderr: {e.stderr}"
+                )
         
         progress(0.8, desc="Encoding video...")
         
