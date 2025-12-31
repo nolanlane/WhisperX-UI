@@ -72,12 +72,6 @@ PRESETS = {
 }
 
 
-def apply_preset(preset: str):
-    """Return preset values for UI components."""
-    batch, model, face_w = PRESETS.get(preset, PRESETS["Live Action"])
-    return batch, model, face_w
-
-
 # =============================================================================
 # Backend Functions
 # =============================================================================
@@ -333,11 +327,14 @@ def restore_video(
         if not upscaled_frames:
             raise gr.Error("Upscaling produced no output frames.")
         
+        # Professional scaling: keep aspect ratio, pad with black, and ensure YUV420P
+        vf = f"scale={res}:force_original_aspect_ratio=decrease,pad={res}:(ow-iw)/2:(oh-ih)/2,format=yuv420p"
+        
         cmd = [
             "ffmpeg", "-y", "-framerate", str(fps),
             "-i", str(final_dir / "frame_%08d.png"),
             "-i", video_file, "-map", "0:v:0", "-map", "1:a:0?",
-            "-vf", f"scale={res}:flags=lanczos"
+            "-vf", vf
         ]
         
         if HAS_NVENC:
@@ -510,14 +507,14 @@ def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, prog
         cmd = ["ffmpeg", "-y", "-i", video]
         
         vc_map = {
-            "H.264": ["-c:v", "libx264", "-crf", str(crf)],
-            "H.265": ["-c:v", "libx265", "-crf", str(crf)],
-            "H.264 (NVENC)": ["-c:v", "h264_nvenc", "-cq", str(crf)],
-            "H.265 (NVENC)": ["-c:v", "hevc_nvenc", "-cq", str(crf)],
-            "VP9": ["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0"],
+            "H.264": ["-c:v", "libx264", "-crf", str(crf), "-pix_fmt", "yuv420p"],
+            "H.265": ["-c:v", "libx265", "-crf", str(crf), "-pix_fmt", "yuv420p"],
+            "H.264 (NVENC)": ["-c:v", "h264_nvenc", "-cq", str(crf), "-pix_fmt", "yuv420p"],
+            "H.265 (NVENC)": ["-c:v", "hevc_nvenc", "-cq", str(crf), "-pix_fmt", "yuv420p"],
+            "VP9": ["-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0", "-pix_fmt", "yuv420p"],
             "Copy": ["-c:v", "copy"]
         }
-        cmd.extend(vc_map.get(vcodec, ["-c:v", "libx264", "-crf", str(crf)]))
+        cmd.extend(vc_map.get(vcodec, ["-c:v", "libx264", "-crf", str(crf), "-pix_fmt", "yuv420p"]))
         
         ac_map = {"AAC": ["-c:a", "aac", "-b:a", "192k"], "Opus": ["-c:a", "libopus", "-b:a", "128k"], "Copy": ["-c:a", "copy"]}
         cmd.extend(ac_map.get(acodec, ["-c:a", "aac"]))
