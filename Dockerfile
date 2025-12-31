@@ -18,6 +18,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 # HuggingFace acceleration
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 ENV HF_HOME=/app/models/huggingface
+ENV NLTK_DATA=/app/models/nltk
+ENV TORCH_HOME=/app/models/torch
 
 # CUDA paths
 ENV PATH="/usr/local/cuda/bin:${PATH}"
@@ -101,6 +103,8 @@ COPY download_models.py start.py app.py ./
 # Create necessary directories
 RUN mkdir -p /app/models/whisper \
     /app/models/huggingface \
+    /app/models/nltk \
+    /app/models/torch \
     /app/outputs \
     /app/temp \
     /app/uploads
@@ -115,6 +119,8 @@ ENV PIP_NO_CACHE_DIR=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 ENV HF_HOME=/app/models/huggingface
+ENV NLTK_DATA=/app/models/nltk
+ENV TORCH_HOME=/app/models/torch
 ENV PATH="/usr/local/cuda/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 
@@ -156,6 +162,8 @@ ENV PATH="/app/bin:${PATH}"
 
 RUN mkdir -p /app/models/whisper \
     /app/models/huggingface \
+    /app/models/nltk \
+    /app/models/torch \
     /app/outputs \
     /app/temp \
     /app/uploads

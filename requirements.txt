@@ -18,7 +18,6 @@ librosa==0.10.2
 pydub==0.25.1
 
 # Video Processing
-ffmpeg-python==0.2.0
 opencv-python-headless==4.9.0.80
 imageio==2.34.0
 imageio-ffmpeg==0.4.9

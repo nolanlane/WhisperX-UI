@@ -1,29 +1,35 @@
-#!/usr/bin/env python3
-"""
-Universal Media Studio - Model Downloader
-Downloads all required models at Docker build time for instant RunPod startup.
-"""
+# =============================================================================
+# Universal Media Studio - Model Downloader
+# Downloads all required models at Docker build time for instant RunPod startup.
+# =============================================================================
 
 import os
 import sys
 import subprocess
 from pathlib import Path
 
-# Paths
-MODELS_DIR = Path("/app/models")
+# Paths - robust to local vs Docker
+BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
+MODELS_DIR = BASE_DIR / "models"
 WHISPER_DIR = MODELS_DIR / "whisper"
 HF_HOME = MODELS_DIR / "huggingface"
-CODEFORMER_DIR = Path("/app/CodeFormer")
-BIN_DIR = Path("/app/bin")
+NLTK_HOME = MODELS_DIR / "nltk"
+TORCH_HOME = MODELS_DIR / "torch"
+CODEFORMER_DIR = BASE_DIR / "CodeFormer"
+BIN_DIR = BASE_DIR / "bin"
+
+# Set HuggingFace, NLTK, and Torch cache locations
+os.environ["HF_HOME"] = str(HF_HOME)
+os.environ["TRANSFORMERS_CACHE"] = str(HF_HOME)
+os.environ["NLTK_DATA"] = str(NLTK_HOME)
+os.environ["TORCH_HOME"] = str(TORCH_HOME)
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 # Ensure directories exist
 WHISPER_DIR.mkdir(parents=True, exist_ok=True)
 HF_HOME.mkdir(parents=True, exist_ok=True)
-
-# Set HuggingFace cache location
-os.environ["HF_HOME"] = str(HF_HOME)
-os.environ["TRANSFORMERS_CACHE"] = str(HF_HOME)
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+NLTK_HOME.mkdir(parents=True, exist_ok=True)
+TORCH_HOME.mkdir(parents=True, exist_ok=True)
 
 
 def download_whisper_model():
@@ -34,6 +40,12 @@ def download_whisper_model():
     
     try:
         import whisperx
+        import nltk
+        
+        # WhisperX uses nltk for sentence segmentation
+        print(f"  Downloading NLTK data to {os.environ['NLTK_DATA']}...")
+        nltk.download('punkt', download_dir=os.environ["NLTK_DATA"])
+        nltk.download('punkt_tab', download_dir=os.environ["NLTK_DATA"])
         
         # Load model to trigger download (uses faster-whisper under the hood)
         # CRITICAL: Use int8 on CPU, NOT float16 (float16 requires GPU)

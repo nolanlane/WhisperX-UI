@@ -34,6 +34,8 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
+os.environ["NLTK_DATA"] = str(MODELS_DIR / "nltk")
+os.environ["TORCH_HOME"] = str(MODELS_DIR / "torch")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Check NVENC
@@ -198,8 +200,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     except gr.Error:
         raise
     except Exception as e:
-        flush_vram()
         raise gr.Error(f"Transcription failed: {str(e)}")
+    finally:
+        flush_vram()
 
 
 def restore_video(
@@ -267,7 +270,7 @@ def restore_video(
                 "-t", str(tile_size),
                 "-n", upscale_model,
                 "-f", "png"
-            ], capture_output=True, text=True)
+            ], capture_output=True, text=True, cwd=str(BIN_DIR))
             if esrgan_result.returncode != 0:
                 raise gr.Error(f"Real-ESRGAN failed: {esrgan_result.stderr}")
         else:
@@ -294,9 +297,16 @@ def restore_video(
                     "--bg_upsampler", "None"
                 ], capture_output=True, check=True, cwd=str(CODEFORMER_DIR))
 
+                # CodeFormer creates a 'final_results' subfolder inside the output path
+                # BUT if we specify --output_path, it might put files directly or in a subfolder
+                # depending on the input type. For directory input, it usually does:
+                # {output_path}/final_results/*.png
                 cf_out = restored_dir / "final_results"
                 if cf_out.exists() and any(cf_out.iterdir()):
                     final_dir = cf_out
+                elif restored_dir.exists() and any(restored_dir.iterdir()):
+                    # Fallback if it puts them directly in restored_dir
+                    final_dir = restored_dir
                 else:
                     raise gr.Error("CodeFormer completed but produced no output frames.")
             except subprocess.CalledProcessError as e:
@@ -369,7 +379,7 @@ def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = g
         out_dir.mkdir(exist_ok=True)
         
         # DeepFilterNet CLI with post-filter for stronger attenuation
-        cmd = ["deepFilter", "--output-dir", str(out_dir)]
+        cmd = ["df-enhance", "--output-dir", str(out_dir)]
         if attenuation > 0.7:
             cmd.append("--pf")  # Post-filter for aggressive noise reduction
         cmd.append(audio_file)
@@ -449,28 +459,30 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
     if not Path(sub_path).exists():
         raise gr.Error(f"Subtitle file not found: {sub_path}")
     
-    progress(0.2, desc="Burning subtitles...")
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = OUTPUT_DIR / f"{Path(video).stem}_subtitled_{ts}.mp4"
-    
-    # Escape path for ffmpeg filter
-    escaped_path = str(sub_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-    vf = f"ass='{escaped_path}'" if sub_path.endswith(".ass") else f"subtitles='{escaped_path}':force_style='FontSize={font_size}'"
-    
-    cmd = ["ffmpeg", "-y", "-i", video, "-vf", vf]
-    cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"] if HAS_NVENC else ["-c:v", "libx264", "-crf", "18"])
-    cmd.extend(["-c:a", "copy", "-movflags", "+faststart", str(out)])
-    
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        raise gr.Error(f"FFmpeg failed: {e.stderr if e.stderr else str(e)}")
-    
-    progress(1.0, desc="Complete!")
-    return str(out)
+        progress(0.2, desc="Burning subtitles...")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out = OUTPUT_DIR / f"{Path(video).stem}_subtitled_{ts}.mp4"
+        
+        # Escape path for ffmpeg filter
+        escaped_path = str(sub_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        vf = f"ass='{escaped_path}'" if sub_path.endswith(".ass") else f"subtitles='{escaped_path}':force_style='FontSize={font_size}'"
+        
+        cmd = ["ffmpeg", "-y", "-i", video, "-vf", vf]
+        cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"] if HAS_NVENC else ["-c:v", "libx264", "-crf", "18"])
+        cmd.extend(["-c:a", "copy", "-movflags", "+faststart", str(out)])
+        
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        progress(1.0, desc="Complete!")
+        return str(out)
+    except Exception as e:
+        raise gr.Error(f"FFmpeg failed: {str(e)}")
+    finally:
+        flush_vram()
 
 
-def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, progress: gr.Progress = gr.Progress()):
+def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, progress: gr.Progress = gr.Progress()) -> Optional[str]:
     """Convert video format."""
     flush_vram()
     if not video:
@@ -510,9 +522,11 @@ def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, prog
         raise
     except Exception as e:
         raise gr.Error(f"Video conversion failed: {str(e)}")
+    finally:
+        flush_vram()
 
 
-def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()):
+def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()) -> Optional[str]:
     """Extract audio from video."""
     flush_vram()
     if not video:
@@ -537,7 +551,7 @@ def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()):
         cmd = ["ffmpeg", "-y", "-i", video, "-vn"] + codec_map.get(fmt, []) + [str(out)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise gr.Error(f"Audio extraction failed: {result.stderr}")
+            raise gr.Error(f"FFmpeg audio extraction failed: {result.stderr}")
         
         progress(1.0, desc="Complete!")
         return str(out)
@@ -545,6 +559,8 @@ def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()):
         raise
     except Exception as e:
         raise gr.Error(f"Audio extraction failed: {str(e)}")
+    finally:
+        flush_vram()
 
 
 # =============================================================================
@@ -605,12 +621,12 @@ def create_ui():
                 scale=2,
                 interactive=True
             )
-            gr.Markdown(
-                "<div style='padding: 10px; background: #f1f5f9; border-radius: 8px; font-size: 0.9em;'>"
-                "💡 <b>Tip:</b> Select a preset to automatically configure AI models for best results."
-                "</div>",
-                scale=4
-            )
+            with gr.Column(scale=4):
+                gr.Markdown(
+                    "<div style='padding: 10px; background: #f1f5f9; border-radius: 8px; font-size: 0.9em;'>"
+                    "💡 <b>Tip:</b> Select a preset to automatically configure AI models for best results."
+                    "</div>"
+                )
         
         # Hidden state components that get updated by preset
         batch_state = gr.State(value=16)
@@ -621,7 +637,7 @@ def create_ui():
         # Tab 1: AI Subtitles
         # =====================================================================
         with gr.Tabs():
-            with gr.TabItem("🎤 AI Subtitles", id="subtitles"):
+            with gr.Tab("🎤 AI Subtitles", id="subtitles"):
                 gr.Markdown(
                     "### Generate accurate, time-aligned subtitles\n"
                     "*Powered by WhisperX with word-level alignment and optional speaker diarization*"
@@ -691,7 +707,7 @@ def create_ui():
             # =================================================================
             # Tab 2: Visual Restoration
             # =================================================================
-            with gr.TabItem("🖼️ Visual Restoration", id="restoration"):
+            with gr.Tab("🖼️ Visual Restoration", id="restoration"):
                 gr.Markdown(
                     "### Upscale and enhance video with AI\n"
                     "*Real-ESRGAN for upscaling + CodeFormer for face restoration*"
@@ -762,7 +778,7 @@ def create_ui():
             # =================================================================
             # Tab 3: The Toolbox (FFmpeg)
             # =================================================================
-            with gr.TabItem("🛠️ Toolbox", id="toolbox"):
+            with gr.Tab("🛠️ Toolbox", id="toolbox"):
                 gr.Markdown(
                     "### FFmpeg-powered utilities\n"
                     "*Convert, extract, and process media with hardware acceleration*"
@@ -770,7 +786,7 @@ def create_ui():
                 
                 with gr.Tabs():
                     # Burn Subtitles
-                    with gr.TabItem("📝 Burn Subtitles"):
+                    with gr.Tab("📝 Burn Subtitles"):
                         gr.Markdown("*Hardcode subtitles into video*")
                         with gr.Row(equal_height=True):
                             with gr.Column(scale=1):
@@ -797,7 +813,7 @@ def create_ui():
                         burn_btn.click(burn_subtitles, [burn_vid, burn_sub, burn_font], burn_out)
                     
                     # Convert
-                    with gr.TabItem("🔄 Convert"):
+                    with gr.Tab("🔄 Convert"):
                         gr.Markdown("*Transcode video with codec and format options*")
                         with gr.Row(equal_height=True):
                             with gr.Column(scale=1):
@@ -835,7 +851,7 @@ def create_ui():
                         conv_btn.click(convert_video, [conv_in, conv_fmt, conv_vc, conv_ac, conv_crf], conv_out)
                     
                     # Extract Audio
-                    with gr.TabItem("🎵 Extract Audio"):
+                    with gr.Tab("🎵 Extract Audio"):
                         gr.Markdown("*Extract audio track from video*")
                         with gr.Row(equal_height=True):
                             with gr.Column(scale=1):
@@ -858,7 +874,7 @@ def create_ui():
                         ext_btn.click(extract_audio, [ext_in, ext_fmt], ext_out)
                     
                     # Standalone Audio Tools
-                    with gr.TabItem("🎧 Audio Tools"):
+                    with gr.Tab("🎧 Audio Tools"):
                         gr.Markdown("*Enhance and separate audio tracks*")
                         with gr.Row(equal_height=True):
                             with gr.Column(scale=1):

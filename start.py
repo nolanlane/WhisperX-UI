@@ -20,7 +20,7 @@ REQUIRED_BINARIES = [
 ]
 
 OPTIONAL_BINARIES = [
-    ("deepFilter", ["deepFilter", "--help"]),
+    ("df-enhance", ["df-enhance", "--help"]),
 ]
 
 REQUIRED_PATHS = [
@@ -70,28 +70,39 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
                 url,
             ], timeout=600)
         except Exception:
-            _run(["wget", "-q", "-L", "-O", str(zip_path), url], timeout=600)
+            _run(["wget", "-q", "-O", str(zip_path), url], timeout=600)
         _run(["unzip", "-o", str(zip_path)], cwd=bin_dir, timeout=600)
 
         # The zip extracts into a subfolder (e.g. realesrgan-ncnn-vulkan-v0.2.0-ubuntu/)
-        # so we need to locate the binary and move it into place.
-        extracted = list(bin_dir.glob("**/realesrgan-ncnn-vulkan"))
-        extracted = [p for p in extracted if p.is_file()]
-        if not extracted:
-            raise RuntimeError(
-                "Real-ESRGAN unzip completed but binary was not found under: "
-                f"{bin_dir}"
-            )
+        # so we need to locate the contents and move them into the bin directory.
+        extracted_dirs = [p for p in bin_dir.glob("realesrgan-ncnn-vulkan-*") if p.is_dir()]
+        if not extracted_dirs:
+            # Fallback: search for the binary specifically
+            binaries = list(bin_dir.glob("**/realesrgan-ncnn-vulkan"))
+            binaries = [p for p in binaries if p.is_file() and p.name == "realesrgan-ncnn-vulkan"]
+            if binaries:
+                src_parent = binaries[0].parent
+            else:
+                raise RuntimeError(f"Real-ESRGAN unzip completed but contents not found in {bin_dir}")
+        else:
+            src_parent = extracted_dirs[0]
 
-        src = extracted[0]
-        if src.resolve() != target.resolve():
-            import shutil
+        import shutil
+        # Move all contents (binary, models folder, etc.) to bin_dir
+        for item in src_parent.iterdir():
+            dest = bin_dir / item.name
+            if dest.resolve() == item.resolve():
+                continue
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest, ignore_errors=True)
+                else:
+                    dest.unlink(missing_ok=True)
+            shutil.move(str(item), str(dest))
 
-            try:
-                target.unlink(missing_ok=True)
-            except Exception:
-                pass
-            shutil.move(str(src), str(target))
+        # Cleanup the now-empty extracted folder
+        if src_parent.exists() and src_parent != bin_dir:
+            shutil.rmtree(src_parent, ignore_errors=True)
 
         _run(["chmod", "+x", str(target)], timeout=30)
     finally:
