@@ -33,6 +33,7 @@ os.environ["HF_HOME"] = str(HF_HOME)
 os.environ["TRANSFORMERS_CACHE"] = str(HF_HOME)
 os.environ["NLTK_DATA"] = str(NLTK_HOME)
 os.environ["TORCH_HOME"] = str(TORCH_HOME)
+os.environ["FACEXLIB_HOME"] = str(MODELS_DIR / "facexlib")
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 # Ensure directories exist

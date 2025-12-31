@@ -48,6 +48,7 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
 os.environ["NLTK_DATA"] = str(MODELS_DIR / "nltk")
 os.environ["TORCH_HOME"] = str(MODELS_DIR / "torch")
+os.environ["FACEXLIB_HOME"] = str(MODELS_DIR / "facexlib")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Now import heavy libraries
@@ -63,12 +64,27 @@ except:
     pass
 
 
+def cleanup_temp_dir():
+    """Remove old temp directories on startup."""
+    if TEMP_DIR.exists():
+        for d in TEMP_DIR.iterdir():
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+    TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+# Run cleanup on import
+cleanup_temp_dir()
+
 def flush_vram():
-    """Flush GPU memory to prevent OOM errors."""
+    """Clear GPU cache and collect garbage."""
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+        torch.cuda.ipc_collect()
+        try:
+            torch.cuda.synchronize()
+        except:
+            pass
 
 
 # =============================================================================
@@ -108,16 +124,15 @@ def generate_subtitles(
         progress(0.1, desc="Loading WhisperX...")
         compute_type = "float16" if DEVICE == "cuda" else "int8"
         
+        progress(0.2, desc="Loading audio...")
+        audio = whisperx.load_audio(audio_file)
+        
+        progress(0.4, desc="Transcribing...")
         model = whisperx.load_model(
             model_size, DEVICE,
             compute_type=compute_type,
             download_root=str(WHISPER_DIR)
         )
-        
-        progress(0.2, desc="Loading audio...")
-        audio = whisperx.load_audio(audio_file)
-        
-        progress(0.3, desc="Transcribing...")
         result = model.transcribe(
             audio,
             batch_size=batch_size,
@@ -125,10 +140,11 @@ def generate_subtitles(
         )
         detected_lang = result["language"]
         
+        # Explicitly delete model to free VRAM
         del model
         flush_vram()
-        
-        progress(0.5, desc="Aligning timestamps...")
+
+        progress(0.6, desc="Aligning timestamps...")
         model_a, metadata = whisperx.load_align_model(
             language_code=detected_lang, 
             device=DEVICE,
@@ -138,7 +154,7 @@ def generate_subtitles(
         
         del model_a
         flush_vram()
-        
+
         # Speaker diarization
         if enable_diarization:
             if not hf_token:
@@ -148,7 +164,7 @@ def generate_subtitles(
                     "2. Accept: huggingface.co/pyannote/segmentation-3.0\n"
                     "3. Accept: huggingface.co/pyannote/speaker-diarization-3.1"
                 )
-            progress(0.7, desc="Diarizing speakers...")
+            progress(0.8, desc="Diarizing speakers...")
             try:
                 from whisperx.diarize import DiarizationPipeline
                 diarize_model = DiarizationPipeline(use_auth_token=hf_token, device=DEVICE)
@@ -216,6 +232,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         flush_vram()
 
 
+def get_free_space_gb():
+    """Check remaining disk space in GB."""
+    stat = os.statvfs(BASE_DIR)
+    return (stat.f_bavail * stat.f_frsize) / (1024**3)
+
 def restore_video(
     video_file: str,
     target_res: str,
@@ -230,6 +251,11 @@ def restore_video(
     
     if not video_file:
         return None, None
+
+    # Disk space safety check
+    free_gb = get_free_space_gb()
+    if free_gb < 10:
+        raise gr.Error(f"Insufficient disk space ({free_gb:.1f}GB remaining). At least 10GB required for frame extraction.")
     
     try:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -248,7 +274,7 @@ def restore_video(
         probe = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=r_frame_rate,width,height", "-of", "json", video_file],
-            capture_output=True, text=True
+            capture_output=True, text=True, timeout=30
         )
         if probe.returncode != 0:
             raise gr.Error(f"Failed to analyze video: {probe.stderr}")
@@ -261,7 +287,7 @@ def restore_video(
         # Extract frames (use %08d for long videos)
         extract_result = subprocess.run(
             ["ffmpeg", "-y", "-i", video_file, "-qscale:v", "1", str(frames_dir / "frame_%08d.png")],
-            capture_output=True, text=True
+            capture_output=True, text=True, timeout=1200
         )
         if extract_result.returncode != 0:
             raise gr.Error(f"Frame extraction failed: {extract_result.stderr}")
@@ -281,7 +307,7 @@ def restore_video(
                 "-t", str(tile_size),
                 "-n", upscale_model,
                 "-f", "png"
-            ], capture_output=True, text=True, cwd=str(BIN_DIR))
+            ], capture_output=True, text=True, cwd=str(BIN_DIR), timeout=3600)
             if esrgan_result.returncode != 0:
                 raise gr.Error(f"Real-ESRGAN failed: {esrgan_result.stderr}")
         else:
@@ -306,7 +332,7 @@ def restore_video(
                     "--input_path", str(upscaled_dir),
                     "--output_path", str(restored_dir),
                     "--bg_upsampler", "None"
-                ], capture_output=True, text=True, check=True, cwd=str(CODEFORMER_DIR))
+                ], capture_output=True, text=True, check=True, cwd=str(CODEFORMER_DIR), timeout=3600)
 
                 # CodeFormer creates a 'final_results' subfolder inside the output path
                 # BUT if we specify --output_path, it might put files directly or in a subfolder
@@ -354,7 +380,7 @@ def restore_video(
         
         cmd.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path)])
         
-        encode_result = subprocess.run(cmd, capture_output=True, text=True)
+        encode_result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         if encode_result.returncode != 0:
             raise gr.Error(f"Video encoding failed: {encode_result.stderr}")
         
@@ -402,7 +428,7 @@ def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = g
             cmd.append("--pf")  # Post-filter for aggressive noise reduction
         cmd.append(audio_file)
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             raise gr.Error(f"DeepFilterNet failed: {result.stderr}")
         
@@ -439,13 +465,14 @@ def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progr
         if importlib.util.find_spec("demucs") is None:
             raise gr.Error("Demucs is not installed in the current environment.")
 
-        result = subprocess.run([
+        cmd = [
             sys.executable, "-m", "demucs",
             "--out", str(out_dir), "-n", model, audio_file
-        ], capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            raise gr.Error(f"Demucs failed: {result.stderr}")
+        ]
+        if DEVICE == "cuda":
+            cmd.extend(["-d", "cuda"])
+            
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=1200)
         
         name = Path(audio_file).stem
         stems_dir = out_dir / model / name
@@ -487,8 +514,10 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out = OUTPUT_DIR / f"{Path(video).stem}_subtitled_{ts}.mp4"
         
-        # Escape path for ffmpeg filter
-        escaped_path = str(sub_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        # Hardened escaping for FFmpeg filter paths
+        # For the subtitles filter, commas, colons, and quotes must be escaped
+        escaped_path = str(sub_path).replace("\\", "/").replace("'", "'\\\\\\''").replace(":", "\\:").replace(",", "\\,")
+        
         # Use 'ass' filter for both .ass and .ssa files
         if sub_path.lower().endswith((".ass", ".ssa")):
             vf = f"ass='{escaped_path}'"
@@ -499,7 +528,7 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
         cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"] if HAS_NVENC else ["-c:v", "libx264", "-crf", "18"])
         cmd.extend(["-c:a", "copy", "-movflags", "+faststart", str(out)])
         
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=1200)
         
         progress(1.0, desc="Complete!")
         return str(out)
@@ -539,7 +568,7 @@ def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, prog
         cmd.extend(ac_map.get(acodec, ["-c:a", "aac"]))
         cmd.extend(["-movflags", "+faststart", str(out)])
         
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
         if result.returncode != 0:
             raise gr.Error(f"FFmpeg conversion failed: {result.stderr}")
         
@@ -576,7 +605,7 @@ def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()) -
         }
         
         cmd = ["ffmpeg", "-y", "-i", video, "-vn"] + codec_map.get(fmt, []) + [str(out)]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
             raise gr.Error(f"FFmpeg audio extraction failed: {result.stderr}")
         
