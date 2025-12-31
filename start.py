@@ -25,6 +25,7 @@ OPTIONAL_BINARIES = [
 
 REQUIRED_PATHS = [
     (BIN_DIR / "realesrgan-ncnn-vulkan", "Real-ESRGAN binary"),
+    (BIN_DIR / "models", "Real-ESRGAN models"),
     (CODEFORMER_DIR / "inference_codeformer.py", "CodeFormer"),
 ]
 

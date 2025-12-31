@@ -10,9 +10,11 @@ import sys
 import json
 import shutil
 import subprocess
+import whisperx
+import nltk
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict, Any
 
 import torch
 import gradio as gr
@@ -95,8 +97,6 @@ def generate_subtitles(
         raise gr.Error(f"File not found: {audio_file}")
     
     try:
-        import whisperx
-        
         progress(0.1, desc="Loading WhisperX...")
         compute_type = "float16" if DEVICE == "cuda" else "int8"
         
@@ -402,7 +402,7 @@ def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = g
         flush_vram()
 
 
-def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progress()):
+def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progress()) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Separate audio stems using Demucs with model selection."""
     flush_vram()
     if not audio_file:
@@ -432,7 +432,7 @@ def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progr
         
         progress(1.0, desc="Complete!")
         
-        def get_stem(s):
+        def get_stem(s: str) -> Optional[str]:
             p = stems_dir / f"{s}.wav"
             return str(p) if p.exists() else None
         
@@ -628,11 +628,6 @@ def create_ui():
                     "</div>"
                 )
         
-        # Hidden state components that get updated by preset
-        batch_state = gr.State(value=16)
-        model_state = gr.State(value="realesrgan-x4plus")
-        face_state = gr.State(value=0.7)
-        
         # =====================================================================
         # Tab 1: AI Subtitles
         # =====================================================================
@@ -648,8 +643,7 @@ def create_ui():
                         sub_input = gr.Audio(
                             label="📁 Upload Audio/Video",
                             type="filepath",
-                            sources=["upload", "microphone"],
-                            show_download_button=False
+                            sources=["upload", "microphone"]
                         )
                         
                         with gr.Accordion("⚙️ Advanced Settings", open=False):

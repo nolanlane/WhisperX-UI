@@ -32,12 +32,12 @@ A production-ready, AI-powered media processing application designed for RunPod 
 
 | Component | Implementation | Notes |
 |-----------|---------------|-------|
-| WhisperX | Python library | float16 compute |
+| WhisperX | Python library | float16 (GPU) / int8 (CPU) |
 | Demucs | subprocess | Memory isolation |
-| Real-ESRGAN | ncnn-vulkan binary | No Python deps |
+| Real-ESRGAN | ncnn-vulkan binary | No Python VRAM overhead |
 | CodeFormer | subprocess | inference_codeformer.py |
-| DeepFilterNet | CLI (deepFilter) | Full-band audio |
-| FFmpeg | ffmpeg-python + subprocess | NVENC when available |
+| DeepFilterNet | CLI (df-enhance) | Full-band audio |
+| FFmpeg | subprocess | Direct CLI control |
 
 ## Installation
 
