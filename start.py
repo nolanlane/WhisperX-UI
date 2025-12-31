@@ -4,6 +4,7 @@ Universal Media Studio - Startup Validation Script
 Validates all dependencies before starting the application.
 """
 
+import os
 import sys
 import logging
 import subprocess
