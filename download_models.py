@@ -15,7 +15,7 @@ WHISPER_DIR = MODELS_DIR / "whisper"
 HF_HOME = MODELS_DIR / "huggingface"
 NLTK_HOME = MODELS_DIR / "nltk"
 TORCH_HOME = MODELS_DIR / "torch"
-CODEFORMER_DIR = BASE_DIR / "CodeFormer"
+CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
 BIN_DIR = BASE_DIR / "bin"
 
 # Set HuggingFace, NLTK, and Torch cache locations
@@ -72,13 +72,15 @@ def download_alignment_models():
         import whisperx
         import torch
         
-        # Download English alignment model (most common)
-        for lang in ["en"]:
+        # Download common alignment models to match UI choices
+        languages = ["en", "es", "fr", "de", "it", "pt", "nl", "pl", "ru", "zh", "ja", "ko", "ar", "hi", "tr", "vi"]
+        for lang in languages:
             print(f"  Downloading alignment model for: {lang}")
             try:
                 model_a, metadata = whisperx.load_align_model(
                     language_code=lang,
-                    device="cpu"
+                    device="cpu",
+                    model_dir=str(MODELS_DIR / "alignment")
                 )
                 del model_a
                 print(f"  ✅ {lang} alignment model ready")

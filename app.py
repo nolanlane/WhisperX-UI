@@ -10,8 +10,6 @@ import sys
 import json
 import shutil
 import subprocess
-import whisperx
-import nltk
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, List, Dict, Any
@@ -29,16 +27,22 @@ MODELS_DIR = BASE_DIR / "models"
 WHISPER_DIR = MODELS_DIR / "whisper"
 OUTPUT_DIR = BASE_DIR / "outputs"
 TEMP_DIR = BASE_DIR / "temp"
-CODEFORMER_DIR = BASE_DIR / "CodeFormer"
+CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
 REALESRGAN_BIN = BASE_DIR / "bin" / "realesrgan-ncnn-vulkan"
+BIN_DIR = BASE_DIR / "bin"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
+# Set environment variables BEFORE importing heavy libraries
 os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
 os.environ["NLTK_DATA"] = str(MODELS_DIR / "nltk")
 os.environ["TORCH_HOME"] = str(MODELS_DIR / "torch")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Now import heavy libraries
+import whisperx
+import nltk
 
 # Check NVENC
 HAS_NVENC = False
@@ -103,8 +107,7 @@ def generate_subtitles(
         model = whisperx.load_model(
             model_size, DEVICE,
             compute_type=compute_type,
-            download_root=str(WHISPER_DIR),
-            language=language if language != "auto" else None
+            download_root=str(WHISPER_DIR)
         )
         
         progress(0.2, desc="Loading audio...")
@@ -122,7 +125,11 @@ def generate_subtitles(
         flush_vram()
         
         progress(0.5, desc="Aligning timestamps...")
-        model_a, metadata = whisperx.load_align_model(language_code=detected_lang, device=DEVICE)
+        model_a, metadata = whisperx.load_align_model(
+            language_code=detected_lang, 
+            device=DEVICE,
+            model_dir=str(MODELS_DIR / "alignment")
+        )
         result = whisperx.align(result["segments"], model_a, metadata, audio, DEVICE, return_char_alignments=False)
         
         del model_a
@@ -295,7 +302,7 @@ def restore_video(
                     "--input_path", str(upscaled_dir),
                     "--output_path", str(restored_dir),
                     "--bg_upsampler", "None"
-                ], capture_output=True, check=True, cwd=str(CODEFORMER_DIR))
+                ], capture_output=True, text=True, check=True, cwd=str(CODEFORMER_DIR))
 
                 # CodeFormer creates a 'final_results' subfolder inside the output path
                 # BUT if we specify --output_path, it might put files directly or in a subfolder
@@ -466,7 +473,11 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
         
         # Escape path for ffmpeg filter
         escaped_path = str(sub_path).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-        vf = f"ass='{escaped_path}'" if sub_path.endswith(".ass") else f"subtitles='{escaped_path}':force_style='FontSize={font_size}'"
+        # Use 'ass' filter for both .ass and .ssa files
+        if sub_path.lower().endswith((".ass", ".ssa")):
+            vf = f"ass='{escaped_path}'"
+        else:
+            vf = f"subtitles='{escaped_path}':force_style='FontSize={font_size}'"
         
         cmd = ["ffmpeg", "-y", "-i", video, "-vf", vf]
         cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"] if HAS_NVENC else ["-c:v", "libx264", "-crf", "18"])

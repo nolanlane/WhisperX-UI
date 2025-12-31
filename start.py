@@ -11,8 +11,9 @@ from pathlib import Path
 
 # Paths - adjust for local vs Docker
 BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
+MODELS_DIR = BASE_DIR / "models"
 BIN_DIR = BASE_DIR / "bin"
-CODEFORMER_DIR = BASE_DIR / "CodeFormer"
+CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
 
 REQUIRED_BINARIES = [
     ("ffmpeg", ["ffmpeg", "-version"]),
@@ -41,7 +42,8 @@ def _run(cmd, *, cwd: Path | None = None, timeout: int | None = None):
 
 def ensure_realesrgan_binary(base_dir: Path) -> None:
     target = base_dir / "bin" / "realesrgan-ncnn-vulkan"
-    if target.exists():
+    models_dir = base_dir / "bin" / "models"
+    if target.exists() and models_dir.exists():
         return
 
     bin_dir = target.parent
@@ -313,7 +315,7 @@ def main():
     # Slim image strategy: acquire heavyweight runtime assets at pod startup.
     try:
         ensure_realesrgan_binary(BASE_DIR)
-        ensure_codeformer_repo(BASE_DIR)
+        ensure_codeformer_repo(MODELS_DIR)
     except Exception as e:
         print(f"\nFATAL: {e}")
         sys.exit(1)
