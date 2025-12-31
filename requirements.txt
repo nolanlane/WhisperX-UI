@@ -3,11 +3,6 @@
 # Pinned for stability on RunPod with CUDA 12.1
 # =============================================================================
 
-# Core PyTorch (CUDA 12.1 compatible)
-torch==2.1.2
-torchaudio==2.1.2
-torchvision==0.16.2
-
 # WhisperX and dependencies
 whisperx==3.1.5
 faster-whisper==1.0.3

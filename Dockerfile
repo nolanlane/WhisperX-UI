@@ -3,7 +3,7 @@
 # Optimized for RunPod with NVIDIA GPU support
 # =============================================================================
 
-FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04 AS builder
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -24,51 +24,40 @@ ENV PATH="/usr/local/cuda/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 
 # =============================================================================
-# System Dependencies
+# System Dependencies (Builder)
 # =============================================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Python
     python3.10 \
     python3.10-dev \
     python3.10-venv \
     python3-pip \
-    # Build tools
     build-essential \
     cmake \
     ninja-build \
     pkg-config \
-    # Git and download tools
     git \
     git-lfs \
     wget \
     curl \
     aria2 \
     unzip \
-    # FFmpeg with full codecs
-    ffmpeg \
-    # Audio libraries
     libsndfile1 \
     libsndfile1-dev \
     libsox-dev \
     sox \
-    # OpenCV dependencies
     libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender1 \
     libgomp1 \
-    # Image libraries
     libjpeg-dev \
     libpng-dev \
     libtiff-dev \
     libwebp-dev \
-    # Vulkan for realesrgan-ncnn
     libvulkan1 \
     libvulkan-dev \
-    vulkan-tools \
     mesa-vulkan-drivers \
-    # Misc
     ca-certificates \
     locales \
     && rm -rf /var/lib/apt/lists/* \
@@ -124,6 +113,60 @@ ENV PATH="/app/bin:${PATH}"
 COPY download_models.py start.py app.py ./
 
 # Create necessary directories
+RUN mkdir -p /app/models/whisper \
+    /app/models/huggingface \
+    /app/outputs \
+    /app/temp \
+    /app/uploads
+
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04 AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV HF_HOME=/app/models/huggingface
+ENV PATH="/usr/local/cuda/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3-pip \
+    ffmpeg \
+    libsndfile1 \
+    sox \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgomp1 \
+    libvulkan1 \
+    mesa-vulkan-drivers \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1 \
+    && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+
+WORKDIR /app
+
+COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+COPY --from=builder /app/CodeFormer /app/CodeFormer
+COPY --from=builder /app/bin /app/bin
+COPY --from=builder /app/download_models.py /app/download_models.py
+COPY --from=builder /app/start.py /app/start.py
+COPY --from=builder /app/app.py /app/app.py
+
+ENV PATH="/app/bin:${PATH}"
+
 RUN mkdir -p /app/models/whisper \
     /app/models/huggingface \
     /app/outputs \
