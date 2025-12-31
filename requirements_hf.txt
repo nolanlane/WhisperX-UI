@@ -1,0 +1,38 @@
+# =============================================================================
+# Universal Media Studio - HuggingFace Spaces Requirements
+# NOTE: PyTorch is pre-installed on HF Spaces, do NOT include it here
+# =============================================================================
+
+# WhisperX and dependencies
+whisperx==3.1.5
+faster-whisper==1.0.3
+ctranslate2==4.4.0
+pyannote.audio==3.1.1
+
+# Gradio UI (use version compatible with HF Spaces)
+gradio>=4.0.0
+
+# Audio Processing
+demucs==4.0.1
+deepfilternet==0.5.6
+soundfile==0.12.1
+librosa==0.10.2
+pydub==0.25.1
+
+# Video Processing
+ffmpeg-python==0.2.0
+imageio==2.34.0
+
+# Utilities
+numpy<2
+scipy>=1.10.0
+Pillow>=9.0.0
+tqdm>=4.60.0
+requests>=2.28.0
+
+# HuggingFace
+huggingface_hub>=0.20.0
+transformers>=4.36.0
+
+# Spaces SDK for ZeroGPU
+spaces>=0.19.0
