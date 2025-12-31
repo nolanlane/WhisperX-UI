@@ -72,6 +72,27 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
         except Exception:
             _run(["wget", "-q", "-L", "-O", str(zip_path), url], timeout=600)
         _run(["unzip", "-o", str(zip_path)], cwd=bin_dir, timeout=600)
+
+        # The zip extracts into a subfolder (e.g. realesrgan-ncnn-vulkan-v0.2.0-ubuntu/)
+        # so we need to locate the binary and move it into place.
+        extracted = list(bin_dir.glob("**/realesrgan-ncnn-vulkan"))
+        extracted = [p for p in extracted if p.is_file()]
+        if not extracted:
+            raise RuntimeError(
+                "Real-ESRGAN unzip completed but binary was not found under: "
+                f"{bin_dir}"
+            )
+
+        src = extracted[0]
+        if src.resolve() != target.resolve():
+            import shutil
+
+            try:
+                target.unlink(missing_ok=True)
+            except Exception:
+                pass
+            shutil.move(str(src), str(target))
+
         _run(["chmod", "+x", str(target)], timeout=30)
     finally:
         try:
