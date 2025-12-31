@@ -5,9 +5,22 @@ Validates all dependencies before starting the application.
 """
 
 import sys
+import logging
 import subprocess
 from pathlib import Path
 
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("Startup")
 
 # Paths - adjust for local vs Docker
 BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
@@ -56,8 +69,7 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
     )
     zip_path = bin_dir / zip_name
 
-    print("\n[Runtime Assets]")
-    print("  ⏬ Downloading Real-ESRGAN binary...")
+    logger.info("  ⏬ Downloading Real-ESRGAN binary...")
     try:
         try:
             _run([
@@ -116,7 +128,7 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
 
     if not target.exists():
         raise RuntimeError(f"Real-ESRGAN binary install failed; expected at {target}")
-    print("  ✓ Real-ESRGAN ready")
+    logger.info("  ✓ Real-ESRGAN ready")
 
 
 def ensure_codeformer_repo(base_dir: Path) -> None:
@@ -125,8 +137,7 @@ def ensure_codeformer_repo(base_dir: Path) -> None:
     if marker.exists():
         return
 
-    print("\n[Runtime Assets]")
-    print("  ⏬ Cloning CodeFormer repository...")
+    logger.info("  ⏬ Cloning CodeFormer repository...")
     try:
         if repo_dir.exists():
             # If the directory exists but is incomplete/corrupt, remove it.
@@ -154,7 +165,7 @@ def ensure_codeformer_repo(base_dir: Path) -> None:
             "CodeFormer clone completed but expected entrypoint is missing: "
             f"{marker}"
         )
-    print("  ✓ CodeFormer repo ready")
+    logger.info("  ✓ CodeFormer repo ready")
 
 
 def check_binary(name, cmd):
@@ -179,12 +190,10 @@ def ensure_models_downloaded(base_dir: Path):
     whisper_dir = models_dir / "whisper"
 
     if _is_dir_nonempty(whisper_dir):
-        print("\n[Models]")
-        print("  ✓ Models already present; skipping download")
+        logger.info("  ✓ Models already present; skipping download")
         return
 
-    print("\n[Models]")
-    print("  ⏬ Models not found; downloading on first run (this may take a while)...")
+    logger.info("  ⏬ Models not found; downloading on first run (this may take a while)...")
 
     downloader = base_dir / "download_models.py"
     if not downloader.exists():
@@ -225,136 +234,79 @@ def ensure_models_downloaded(base_dir: Path):
         log_path.unlink(missing_ok=True)
     except Exception:
         pass
-    print("  ✓ Model download complete")
+    logger.info("  ✓ Model download complete")
 
 
 def main():
     """Main validation and startup routine."""
-    print("\n" + "=" * 55)
-    print("  Universal Media Studio - Startup Validation")
-    print("=" * 55)
+    # Ensure sitecustomize.py is loaded for the downloader and the app
+    os.environ["PYTHONPATH"] = f"{BASE_DIR}:{os.environ.get('PYTHONPATH', '')}"
+    
+    logger.info("=" * 55)
+    logger.info("  Universal Media Studio - Startup Validation")
+    logger.info("=" * 55)
     
     errors = []
     warnings = []
     
     # Check required binaries
-    print("\n[Binaries]")
+    logger.info("[Binaries]")
     for name, cmd in REQUIRED_BINARIES:
         if check_binary(name, cmd):
-            print(f"  ✓ {name}")
+            logger.info(f"  ✓ {name}")
         else:
-            print(f"  ✗ {name} - REQUIRED")
+            logger.error(f"  ✗ {name} - REQUIRED")
             errors.append(name)
     
     # Check optional binaries
     for name, cmd in OPTIONAL_BINARIES:
         if check_binary(name, cmd):
-            print(f"  ✓ {name}")
+            logger.info(f"  ✓ {name}")
         else:
-            print(f"  ⚠ {name} - optional, feature disabled")
+            logger.warning(f"  ⚠ {name} - optional, feature disabled")
             warnings.append(name)
     
-    # Check required paths
-    print("\n[AI Models & Tools]")
-    for path, desc in REQUIRED_PATHS:
-        if path.exists():
-            print(f"  ✓ {desc}")
-        else:
-            print(f"  ⚠ {desc} not found at {path}")
-            warnings.append(desc)
-    
-    # Check GPU
-    print("\n[GPU & Acceleration]")
-    try:
-        import torch
-        if torch.cuda.is_available():
-            gpu_name = torch.cuda.get_device_name(0)
-            vram = torch.cuda.get_device_properties(0).total_memory / 1e9
-            print(f"  ✓ CUDA: {gpu_name} ({vram:.1f} GB VRAM)")
-        else:
-            print("  ⚠ CUDA not available - running in CPU mode (slower)")
-            warnings.append("CUDA")
-    except Exception as e:
-        print(f"  ⚠ GPU check failed: {e}")
-        warnings.append("GPU")
-    
-    # Check Vulkan (required for Real-ESRGAN)
-    vulkan_ready = False
-    try:
-        # Check for vulkan library and at least one device
-        result = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True, timeout=5)
-        if result.returncode == 0:
-            print("  ✓ Vulkan hardware acceleration available")
-            vulkan_ready = True
-        else:
-            # Fallback check for library only
-            result = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True)
-            if "libvulkan.so" in result.stdout:
-                print("  ✓ Vulkan library found (device check skipped)")
-                vulkan_ready = True
-            else:
-                print("  ⚠ Vulkan not found - Real-ESRGAN may fail")
-                warnings.append("Vulkan")
-    except Exception:
-        # If vulkan-utils not installed, check library directly
-        try:
-            import ctypes.util
-            if ctypes.util.find_library('vulkan'):
-                print("  ✓ Vulkan library found")
-                vulkan_ready = True
-            else:
-                print("  ⚠ Vulkan check skipped (utilities missing)")
-        except Exception:
-            pass
-    
-    # Check NVENC
-    print("\n[Hardware Encoding]")
-    has_nvenc = False
-    try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-encoders"],
-            capture_output=True, text=True, timeout=5
-        )
-        if "h264_nvenc" in result.stdout:
-            print("  ✓ NVENC hardware encoding available")
-            has_nvenc = True
-        else:
-            print("  ⚠ NVENC not available - using software encoding")
-    except Exception:
-        print("  ⚠ Could not check NVENC availability")
-    
     # Summary
-    print("\n" + "=" * 55)
+    logger.info("=" * 55)
     
     if errors:
-        print(f"FATAL: Missing required dependencies: {errors}")
-        print("Please install missing dependencies and try again.")
+        logger.error(f"FATAL: Missing required dependencies: {errors}")
+        logger.error("Please install missing dependencies and try again.")
         sys.exit(1)
     
-    if warnings:
-        print(f"Warnings (non-fatal): {len(warnings)} items")
-        print("Some features may be limited.")
-    else:
-        print("All checks passed!")
-    
-    print("=" * 55)
-    print("\nStarting Universal Media Studio...")
-    print("Access the UI at: http://localhost:7860\n")
-
     # Slim image strategy: acquire heavyweight runtime assets at pod startup.
     try:
         ensure_realesrgan_binary(BASE_DIR)
         ensure_codeformer_repo(MODELS_DIR)
     except Exception as e:
-        print(f"\nFATAL: {e}")
+        logger.error(f"FATAL: {e}")
         sys.exit(1)
+
+    # Now check required paths after asset acquisition
+    logger.info("[AI Models & Tools]")
+    for path, desc in REQUIRED_PATHS:
+        if path.exists():
+            logger.info(f"  ✓ {desc}")
+        else:
+            logger.warning(f"  ⚠ {desc} not found at {path}")
+            warnings.append(desc)
 
     # Option 2: download models on first run if missing
     try:
         ensure_models_downloaded(BASE_DIR)
     except Exception as e:
-        print(f"\nFATAL: {e}")
+        logger.error(f"FATAL: {e}")
         sys.exit(1)
+
+    if warnings:
+        logger.warning(f"Warnings (non-fatal): {len(warnings)} items")
+        logger.warning("Some features may be limited.")
+    else:
+        logger.info("All checks passed!")
+    
+    logger.info("=" * 55)
+    logger.info("Starting Universal Media Studio...")
+    logger.info("Access the UI at: http://localhost:7860")
     
     # Import and run app
     from app import create_ui, APP_TITLE, DEVICE, HAS_NVENC

@@ -98,7 +98,7 @@ RUN pip install -r requirements.txt
 # =============================================================================
 # Copy Application Files
 # =============================================================================
-COPY download_models.py start.py app.py ./
+COPY download_models.py start.py app.py sitecustomize.py ./
 
 # Create necessary directories
 RUN mkdir -p /app/models/whisper \
@@ -140,6 +140,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libgomp1 \
     libvulkan1 \
+    vulkan-tools \
     mesa-vulkan-drivers \
     ca-certificates \
     curl \
@@ -157,8 +158,10 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app/download_models.py /app/download_models.py
 COPY --from=builder /app/start.py /app/start.py
 COPY --from=builder /app/app.py /app/app.py
+COPY --from=builder /app/sitecustomize.py /app/sitecustomize.py
 
 ENV PATH="/app/bin:${PATH}"
+ENV PYTHONPATH="/app:${PYTHONPATH}"
 
 RUN mkdir -p /app/models/whisper \
     /app/models/huggingface \

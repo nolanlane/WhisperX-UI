@@ -33,11 +33,35 @@ A production-ready, AI-powered media processing application designed for RunPod 
 | Component | Implementation | Notes |
 |-----------|---------------|-------|
 | WhisperX | Python library | float16 (GPU) / int8 (CPU) |
-| Demucs | subprocess | Memory isolation |
-| Real-ESRGAN | ncnn-vulkan binary | No Python VRAM overhead |
-| CodeFormer | subprocess | inference_codeformer.py |
-| DeepFilterNet | CLI (df-enhance) | Full-band audio |
-| FFmpeg | subprocess | Direct CLI control |
+| Demucs | subprocess | Memory isolation + GPU targeting |
+| Real-ESRGAN | ncnn-vulkan binary | Vulkan hardware acceleration |
+| CodeFormer | subprocess | Face restoration with fidelity control |
+| DeepFilterNet | CLI (df-enhance) | Aggressive noise reduction (GPU) |
+| FFmpeg | subprocess | Hardened path escaping & NVENC support |
+
+## Technical Architecture
+
+The application follows a "Guardian Process" pattern for maximum stability in containerized environments:
+
+### Lifecycle Workflow
+1.  **Orchestration (`start.py`)**: Bootstraps the environment, acquires runtime binaries (Real-ESRGAN/CodeFormer), and validates hardware acceleration (CUDA/Vulkan/NVENC).
+2.  **Model Management (`download_models.py`)**: Ensures all AI weights are stored in the persistent `/app/models` volume.
+3.  **Core Logic (`app.py`)**: A Gradio-based engine that orchestrates heavy media pipelines with aggressive VRAM management and process isolation.
+4.  **Compatibility (`sitecustomize.py`)**: Injected via `PYTHONPATH` to apply global monkey patches (e.g., BasicSR/Torchvision fixes) across all child processes.
+
+### Data Pipelines
+-   **ASR**: `Audio -> WhisperX -> Alignment -> Diarization -> Export`
+-   **Restoration**: `Video -> Frames (FFmpeg) -> NCNN (Binary) -> CodeFormer (PyTorch) -> Stitch (FFmpeg)`
+-   **Audio Tools**: `Audio -> DeepFilterNet/Demucs -> Memory-Isolated Processing`
+
+## Persistence & Performance
+
+This application is optimized for **RunPod** and other containerized environments:
+
+- **Model Persistence**: All models are stored in `/app/models`. Map this to a persistent volume to avoid downloads on every boot.
+- **VRAM Optimization**: Aggressive memory flushing between AI stages ensures stability on 8GB+ GPUs.
+- **Hardware Acceleration**: Automatically detects and utilizes **CUDA** (Torch), **Vulkan** (Real-ESRGAN), and **NVENC** (FFmpeg).
+- **Auto-Cleanup**: Startup routine cleans up temporary files and outputs older than 24 hours to prevent disk exhaustion.
 
 ## Installation
 

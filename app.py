@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import shutil
+import logging
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -17,7 +18,19 @@ from typing import Optional, Tuple, List, Dict, Any
 import torch
 import gradio as gr
 
-# FIX: Monkey patch for BasicSR compatibility with torchvision >= 0.16
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("UniversalMediaStudio")
+
+# FIX: Global monkey patch for BasicSR compatibility with torchvision >= 0.16
 # BasicSR expects torchvision.transforms.functional_tensor which was removed
 try:
     import torchvision
@@ -45,10 +58,12 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # Set environment variables BEFORE importing heavy libraries
+os.environ["PYTHONPATH"] = f"{BASE_DIR}:{os.environ.get('PYTHONPATH', '')}"
 os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
 os.environ["NLTK_DATA"] = str(MODELS_DIR / "nltk")
 os.environ["TORCH_HOME"] = str(MODELS_DIR / "torch")
 os.environ["FACEXLIB_HOME"] = str(MODELS_DIR / "facexlib")
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Now import heavy libraries
@@ -64,16 +79,35 @@ except:
     pass
 
 
+def cleanup_old_outputs(max_age_hours=24):
+    """Remove output files older than max_age_hours."""
+    if not OUTPUT_DIR.exists():
+        return
+    now = datetime.now().timestamp()
+    for f in OUTPUT_DIR.iterdir():
+        if f.is_file():
+            if (now - f.stat().st_mtime) > (max_age_hours * 3600):
+                try:
+                    f.unlink()
+                except:
+                    pass
+
 def cleanup_temp_dir():
     """Remove old temp directories on startup."""
     if TEMP_DIR.exists():
         for d in TEMP_DIR.iterdir():
             if d.is_dir():
                 shutil.rmtree(d, ignore_errors=True)
+            else:
+                try:
+                    d.unlink()
+                except:
+                    pass
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
-# Run cleanup on import
+# Run cleanups on import
 cleanup_temp_dir()
+cleanup_old_outputs()
 
 def flush_vram():
     """Clear GPU cache and collect garbage."""
@@ -174,6 +208,11 @@ def generate_subtitles(
                 flush_vram()
             except Exception as e:
                 raise gr.Error(f"Diarization failed: {e}\nCheck your HuggingFace token and model agreements.")
+        
+        # Reclaim memory from audio array
+        if 'audio' in locals():
+            del audio
+        flush_vram()
         
         progress(0.9, desc="Writing files...")
         
@@ -424,6 +463,9 @@ def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = g
 
         # DeepFilterNet CLI with post-filter for stronger attenuation
         cmd = ["df-enhance", "--output-dir", str(out_dir)]
+        if DEVICE == "cuda":
+            cmd.extend(["--device", "0"]) # Explicitly target first GPU
+        
         if attenuation > 0.7:
             cmd.append("--pf")  # Post-filter for aggressive noise reduction
         cmd.append(audio_file)
@@ -495,7 +537,7 @@ def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progr
         flush_vram()
 
 
-def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.Progress()):
+def burn_subtitles(video: str, subs: Any, font_size: int, progress: gr.Progress = gr.Progress()) -> str:
     """Burn subtitles into video."""
     flush_vram()
     if not video:
@@ -514,14 +556,18 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out = OUTPUT_DIR / f"{Path(video).stem}_subtitled_{ts}.mp4"
         
-        # Hardened escaping for FFmpeg filter paths
-        # For the subtitles filter, commas, colons, and quotes must be escaped
-        escaped_path = str(sub_path).replace("\\", "/").replace("'", "'\\\\\\''").replace(":", "\\:").replace(",", "\\,")
+        # Hardened escaping for FFmpeg filter paths (internal FFmpeg escaping)
+        # For the subtitles/ass filters, the filename is a string within a filtergraph.
+        # 1. Backslashes must be doubled
+        # 2. Single quotes must be escaped as '\''
+        # 3. Colons must be escaped if they are interpreted as separators
+        escaped_path = str(sub_path).replace("\\", "/").replace("'", "'\\''").replace(":", "\\:")
         
         # Use 'ass' filter for both .ass and .ssa files
         if sub_path.lower().endswith((".ass", ".ssa")):
             vf = f"ass='{escaped_path}'"
         else:
+            # force_style uses its own comma-separated key=value format
             vf = f"subtitles='{escaped_path}':force_style='FontSize={font_size}'"
         
         cmd = ["ffmpeg", "-y", "-i", video, "-vf", vf]
@@ -617,6 +663,37 @@ def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()) -
         raise gr.Error(f"Audio extraction failed: {str(e)}")
     finally:
         flush_vram()
+
+
+def on_preset_change(preset: str) -> Tuple[int, str, float]:
+    """Update UI components based on selected media preset."""
+    batch, model, face_w = PRESETS.get(preset, PRESETS["Live Action"])
+    return batch, model, face_w
+
+
+def process_audio(
+    audio: str,
+    denoise: bool,
+    strength: float,
+    separate: bool,
+    model: str,
+    progress: gr.Progress = gr.Progress()
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Combined helper for audio enhancement and stem separation."""
+    if not audio:
+        raise gr.Error("Please upload an audio file.")
+    enhanced = None
+    v, d, b, o = None, None, None, None
+    try:
+        if denoise:
+            enhanced = enhance_audio(audio, strength, progress)
+        if separate:
+            v, d, b, o = separate_stems(audio, model, progress)
+    except gr.Error:
+        raise
+    except Exception as e:
+        raise gr.Error(f"Audio processing failed: {str(e)}")
+    return enhanced, v, d, b, o
 
 
 # =============================================================================
@@ -748,75 +825,11 @@ def create_ui():
                             sub_srt = gr.File(label="📄 SRT File", file_count="single")
                             sub_ass = gr.File(label="📄 ASS File", file_count="single")
                 
+                # Connect UI actions
                 sub_btn.click(
                     fn=generate_subtitles,
                     inputs=[sub_input, sub_model, sub_batch, sub_lang, sub_token, sub_diarize],
                     outputs=[sub_transcript, sub_srt, sub_ass]
-                )
-            
-            # =================================================================
-            # Tab 2: Visual Restoration
-            # =================================================================
-            with gr.Tab("🖼️ Visual Restoration", id="restoration"):
-                gr.Markdown(
-                    "### Upscale and enhance video with AI\n"
-                    "*Real-ESRGAN for upscaling + CodeFormer for face restoration*"
-                )
-                
-                with gr.Row(equal_height=True):
-                    with gr.Column(scale=1):
-                        vid_input = gr.Video(
-                            label="📁 Upload Video",
-                            sources=["upload"],
-                            show_download_button=False
-                        )
-                        vid_res = gr.Radio(
-                            ["1080p", "4K"],
-                            value="1080p",
-                            label="🎯 Target Resolution",
-                            info="Output resolution after upscaling"
-                        )
-                        
-                        with gr.Accordion("🔧 Upscaler Settings", open=False):
-                            vid_model = gr.Dropdown(
-                                choices=["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3"],
-                                value="realesrgan-x4plus",
-                                label="Upscale Model",
-                                info="Use anime models for animated content"
-                            )
-                            vid_tile = gr.Slider(
-                                32, 512, value=256, step=32,
-                                label="Tile Size",
-                                info="Lower = less VRAM, slower processing"
-                            )
-                            gr.Markdown("---")
-                            vid_face_enable = gr.Checkbox(
-                                label="👤 Face Restoration (CodeFormer)",
-                                value=True,
-                                info="Enhance facial details in live action"
-                            )
-                            vid_face_w = gr.Slider(
-                                0.0, 1.0, value=0.7, step=0.1,
-                                label="Face Fidelity",
-                                info="Higher = more faithful to original, lower = more enhancement"
-                            )
-                        
-                        vid_btn = gr.Button("✨ Restore Video", variant="primary", size="lg", elem_classes=["primary-btn"])
-                    
-                    with gr.Column(scale=1, elem_classes=["output-panel"]):
-                        gr.Markdown("#### 📤 Output")
-                        vid_preview = gr.Video(label="🎬 Preview", interactive=False)
-                        vid_download = gr.File(label="📥 Download Result", file_count="single")
-                
-                # Connect preset to update components
-                def on_preset_change(preset):
-                    batch, model, face_w = PRESETS.get(preset, PRESETS["Live Action"])
-                    return batch, model, face_w
-                
-                preset_dropdown.change(
-                    fn=on_preset_change,
-                    inputs=[preset_dropdown],
-                    outputs=[sub_batch, vid_model, vid_face_w]
                 )
                 
                 vid_btn.click(
@@ -824,171 +837,23 @@ def create_ui():
                     inputs=[vid_input, vid_res, vid_model, vid_tile, vid_face_w, vid_face_enable],
                     outputs=[vid_preview, vid_download]
                 )
-            
-            # =================================================================
-            # Tab 3: The Toolbox (FFmpeg)
-            # =================================================================
-            with gr.Tab("🛠️ Toolbox", id="toolbox"):
-                gr.Markdown(
-                    "### FFmpeg-powered utilities\n"
-                    "*Convert, extract, and process media with hardware acceleration*"
+                
+                # Preset connection
+                preset_dropdown.change(
+                    fn=on_preset_change,
+                    inputs=[preset_dropdown],
+                    outputs=[sub_batch, vid_model, vid_face_w]
                 )
                 
-                with gr.Tabs():
-                    # Burn Subtitles
-                    with gr.Tab("📝 Burn Subtitles"):
-                        gr.Markdown("*Hardcode subtitles into video*")
-                        with gr.Row(equal_height=True):
-                            with gr.Column(scale=1):
-                                burn_vid = gr.Video(
-                                    label="📁 Video",
-                                    sources=["upload"],
-                                    show_download_button=False
-                                )
-                                burn_sub = gr.File(
-                                    label="📄 Subtitle File",
-                                    file_types=[".srt", ".ass", ".ssa", ".vtt"],
-                                    file_count="single"
-                                )
-                                burn_font = gr.Slider(
-                                    16, 48, value=24, step=2,
-                                    label="Font Size",
-                                    info="Adjust subtitle size"
-                                )
-                                burn_btn = gr.Button("🔥 Burn Subtitles", variant="primary", elem_classes=["primary-btn"])
-                            with gr.Column(scale=1, elem_classes=["output-panel"]):
-                                gr.Markdown("#### 📤 Output")
-                                burn_out = gr.Video(label="📥 Result")
-                        
-                        burn_btn.click(burn_subtitles, [burn_vid, burn_sub, burn_font], burn_out)
-                    
-                    # Convert
-                    with gr.Tab("🔄 Convert"):
-                        gr.Markdown("*Transcode video with codec and format options*")
-                        with gr.Row(equal_height=True):
-                            with gr.Column(scale=1):
-                                conv_in = gr.Video(
-                                    label="📁 Input Video",
-                                    sources=["upload"],
-                                    show_download_button=False
-                                )
-                                conv_fmt = gr.Dropdown(
-                                    ["mp4", "mkv", "webm", "mov", "avi"],
-                                    value="mp4",
-                                    label="Output Format"
-                                )
-                                conv_vc = gr.Dropdown(
-                                    ["H.264", "H.265", "H.264 (NVENC)", "H.265 (NVENC)", "VP9", "Copy"],
-                                    value="H.264 (NVENC)" if HAS_NVENC else "H.264",
-                                    label="Video Codec",
-                                    info="NVENC uses GPU hardware encoding"
-                                )
-                                conv_ac = gr.Dropdown(
-                                    ["AAC", "Opus", "Copy"],
-                                    value="AAC",
-                                    label="Audio Codec"
-                                )
-                                conv_crf = gr.Slider(
-                                    15, 35, value=20, step=1,
-                                    label="Quality (CRF)",
-                                    info="Lower = better quality, larger file"
-                                )
-                                conv_btn = gr.Button("⚡ Convert", variant="primary", elem_classes=["primary-btn"])
-                            with gr.Column(scale=1, elem_classes=["output-panel"]):
-                                gr.Markdown("#### 📤 Output")
-                                conv_out = gr.File(label="📥 Converted File", file_count="single")
-                        
-                        conv_btn.click(convert_video, [conv_in, conv_fmt, conv_vc, conv_ac, conv_crf], conv_out)
-                    
-                    # Extract Audio
-                    with gr.Tab("🎵 Extract Audio"):
-                        gr.Markdown("*Extract audio track from video*")
-                        with gr.Row(equal_height=True):
-                            with gr.Column(scale=1):
-                                ext_in = gr.Video(
-                                    label="📁 Input Video",
-                                    sources=["upload"],
-                                    show_download_button=False
-                                )
-                                ext_fmt = gr.Dropdown(
-                                    ["mp3", "wav", "flac", "aac", "opus"],
-                                    value="mp3",
-                                    label="Output Format",
-                                    info="WAV/FLAC for lossless, MP3/AAC for compressed"
-                                )
-                                ext_btn = gr.Button("🎶 Extract Audio", variant="primary", elem_classes=["primary-btn"])
-                            with gr.Column(scale=1, elem_classes=["output-panel"]):
-                                gr.Markdown("#### 📤 Output")
-                                ext_out = gr.Audio(label="🔊 Extracted Audio", type="filepath")
-                        
-                        ext_btn.click(extract_audio, [ext_in, ext_fmt], ext_out)
-                    
-                    # Standalone Audio Tools
-                    with gr.Tab("🎧 Audio Tools"):
-                        gr.Markdown("*Enhance and separate audio tracks*")
-                        with gr.Row(equal_height=True):
-                            with gr.Column(scale=1):
-                                at_in = gr.Audio(
-                                    label="📁 Input Audio",
-                                    type="filepath",
-                                    sources=["upload"]
-                                )
-                                gr.Markdown("##### 🔊 Noise Reduction")
-                                at_denoise = gr.Checkbox(
-                                    label="Enable DeepFilterNet",
-                                    value=True,
-                                    info="AI-powered noise reduction"
-                                )
-                                at_strength = gr.Slider(
-                                    0.3, 1.0, value=0.7, step=0.1,
-                                    label="Denoise Strength",
-                                    info="Higher = more aggressive noise removal"
-                                )
-                                gr.Markdown("##### 🎸 Stem Separation")
-                                at_separate = gr.Checkbox(
-                                    label="Enable Demucs",
-                                    value=False,
-                                    info="Separate vocals, drums, bass, other"
-                                )
-                                at_model = gr.Dropdown(
-                                    ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra"],
-                                    value="htdemucs",
-                                    label="Demucs Model",
-                                    info="htdemucs_ft is fine-tuned for music"
-                                )
-                                at_btn = gr.Button("🎯 Process Audio", variant="primary", elem_classes=["primary-btn"])
-                            with gr.Column(scale=1, elem_classes=["output-panel"]):
-                                gr.Markdown("#### 📤 Output")
-                                at_enhanced = gr.Audio(label="✨ Enhanced", type="filepath")
-                                gr.Markdown("##### Separated Stems")
-                                with gr.Row():
-                                    at_vocals = gr.Audio(label="🎤 Vocals", type="filepath")
-                                    at_other = gr.Audio(label="🎸 Instrumental", type="filepath")
-                                with gr.Row():
-                                    at_drums = gr.Audio(label="🥁 Drums", type="filepath")
-                                    at_bass = gr.Audio(label="🎸 Bass", type="filepath")
-                        
-                        def process_audio(audio, denoise, strength, separate, model, progress=gr.Progress()):
-                            if not audio:
-                                raise gr.Error("Please upload an audio file.")
-                            enhanced = None
-                            v, d, b, o = None, None, None, None
-                            try:
-                                if denoise:
-                                    enhanced = enhance_audio(audio, strength, progress)
-                                if separate:
-                                    v, d, b, o = separate_stems(audio, model, progress)
-                            except gr.Error:
-                                raise
-                            except Exception as e:
-                                raise gr.Error(f"Audio processing failed: {str(e)}")
-                            return enhanced, v, d, b, o
-                        
-                        at_btn.click(
-                            process_audio,
-                            [at_in, at_denoise, at_strength, at_separate, at_model],
-                            [at_enhanced, at_vocals, at_drums, at_bass, at_other]
-                        )
+                # Toolbox tools
+                burn_btn.click(burn_subtitles, [burn_vid, burn_sub, burn_font], burn_out)
+                conv_btn.click(convert_video, [conv_in, conv_fmt, conv_vc, conv_ac, conv_crf], conv_out)
+                ext_btn.click(extract_audio, [ext_in, ext_fmt], ext_out)
+                at_btn.click(
+                    process_audio,
+                    [at_in, at_denoise, at_strength, at_separate, at_model],
+                    [at_enhanced, at_vocals, at_drums, at_bass, at_other]
+                )
         
         # Footer
         gr.Markdown(
@@ -1008,6 +873,17 @@ def create_ui():
 # =============================================================================
 
 if __name__ == "__main__":
-    print(f"\n{'='*50}\n🎬 {APP_TITLE}\nDevice: {DEVICE} | NVENC: {HAS_NVENC}\n{'='*50}\n")
+    logger.info("="*60)
+    logger.info(f"🚀 {APP_TITLE} Starting...")
+    logger.info("="*60)
+    logger.info(f"📍 Base Dir:    {BASE_DIR}")
+    logger.info(f"📍 Models Dir:  {MODELS_DIR}")
+    logger.info(f"📍 Output Dir:  {OUTPUT_DIR}")
+    logger.info(f"📍 Temp Dir:    {TEMP_DIR}")
+    logger.info(f"📍 Device:      {DEVICE}")
+    logger.info(f"📍 NVENC:       {HAS_NVENC}")
+    logger.info(f"📍 PYTHONPATH:  {os.environ.get('PYTHONPATH', 'Not set')}")
+    logger.info("="*60)
+    
     app = create_ui()
     app.queue(max_size=10, default_concurrency_limit=1).launch(server_name="0.0.0.0", server_port=7860, show_error=True)
