@@ -46,13 +46,16 @@ except ImportError:
 
 APP_TITLE = "Universal Media Studio"
 BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
-MODELS_DIR = BASE_DIR / "models"
+# Storage directory for persistence (prefer /workspace on RunPod)
+STORAGE_DIR = Path("/workspace") if Path("/workspace").exists() else BASE_DIR
+
+MODELS_DIR = STORAGE_DIR / "models"
 WHISPER_DIR = MODELS_DIR / "whisper"
-OUTPUT_DIR = BASE_DIR / "outputs"
-TEMP_DIR = BASE_DIR / "temp"
+OUTPUT_DIR = STORAGE_DIR / "outputs"
+TEMP_DIR = STORAGE_DIR / "temp"
 CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
-REALESRGAN_BIN = BASE_DIR / "bin" / "realesrgan-ncnn-vulkan"
-BIN_DIR = BASE_DIR / "bin"
+REALESRGAN_BIN = STORAGE_DIR / "bin" / "realesrgan-ncnn-vulkan"
+BIN_DIR = STORAGE_DIR / "bin"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -80,17 +83,19 @@ except:
 
 
 def cleanup_old_outputs(max_age_hours=24):
-    """Remove output files older than max_age_hours."""
+    """Remove output files and directories older than max_age_hours."""
     if not OUTPUT_DIR.exists():
         return
     now = datetime.now().timestamp()
-    for f in OUTPUT_DIR.iterdir():
-        if f.is_file():
-            if (now - f.stat().st_mtime) > (max_age_hours * 3600):
-                try:
-                    f.unlink()
-                except:
-                    pass
+    for item in OUTPUT_DIR.iterdir():
+        try:
+            if (now - item.stat().st_mtime) > (max_age_hours * 3600):
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+        except Exception as e:
+            logger.debug(f"Failed to cleanup {item}: {e}")
 
 def cleanup_temp_dir():
     """Remove old temp directories on startup."""

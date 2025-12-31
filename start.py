@@ -24,8 +24,11 @@ logger = logging.getLogger("Startup")
 
 # Paths - adjust for local vs Docker
 BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
-MODELS_DIR = BASE_DIR / "models"
-BIN_DIR = BASE_DIR / "bin"
+# Storage directory for persistence (prefer /workspace on RunPod)
+STORAGE_DIR = Path("/workspace") if Path("/workspace").exists() else BASE_DIR
+
+MODELS_DIR = STORAGE_DIR / "models"
+BIN_DIR = STORAGE_DIR / "bin"
 CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
 
 REQUIRED_BINARIES = [
@@ -184,10 +187,9 @@ def _is_dir_nonempty(path: Path) -> bool:
         return False
 
 
-def ensure_models_downloaded(base_dir: Path):
+def ensure_models_downloaded():
     """Option 2 (slim image): download models on first run if missing."""
-    models_dir = base_dir / "models"
-    whisper_dir = models_dir / "whisper"
+    whisper_dir = MODELS_DIR / "whisper"
 
     if _is_dir_nonempty(whisper_dir):
         logger.info("  ✓ Models already present; skipping download")
@@ -195,17 +197,17 @@ def ensure_models_downloaded(base_dir: Path):
 
     logger.info("  ⏬ Models not found; downloading on first run (this may take a while)...")
 
-    downloader = base_dir / "download_models.py"
+    downloader = BASE_DIR / "download_models.py"
     if not downloader.exists():
         raise RuntimeError(f"download_models.py not found at {downloader}")
 
-    log_path = base_dir / "temp" / "model_download.log"
+    log_path = STORAGE_DIR / "temp" / "model_download.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(log_path, "w", encoding="utf-8") as f:
         proc = subprocess.run(
             [sys.executable, str(downloader)],
-            cwd=str(base_dir),
+            cwd=str(BASE_DIR),
             stdout=f,
             stderr=subprocess.STDOUT,
             text=True,
@@ -276,7 +278,7 @@ def main():
     
     # Slim image strategy: acquire heavyweight runtime assets at pod startup.
     try:
-        ensure_realesrgan_binary(BASE_DIR)
+        ensure_realesrgan_binary(STORAGE_DIR)
         ensure_codeformer_repo(MODELS_DIR)
     except Exception as e:
         logger.error(f"FATAL: {e}")
@@ -293,7 +295,7 @@ def main():
 
     # Option 2: download models on first run if missing
     try:
-        ensure_models_downloaded(BASE_DIR)
+        ensure_models_downloaded()
     except Exception as e:
         logger.error(f"FATAL: {e}")
         sys.exit(1)

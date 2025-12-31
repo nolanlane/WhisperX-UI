@@ -41,11 +41,11 @@ A production-ready, AI-powered media processing application designed for RunPod 
 
 ## Technical Architecture
 
-The application follows a "Guardian Process" pattern for maximum stability in containerized environments:
+The application follows a **"Guardian Process"** pattern for maximum stability in containerized environments:
 
 ### Lifecycle Workflow
 1.  **Orchestration (`start.py`)**: Bootstraps the environment, acquires runtime binaries (Real-ESRGAN/CodeFormer), and validates hardware acceleration (CUDA/Vulkan/NVENC).
-2.  **Model Management (`download_models.py`)**: Ensures all AI weights are stored in the persistent `/app/models` volume.
+2.  **Model Management (`download_models.py`)**: Ensures all AI weights are stored in the persistent storage volume (`/workspace/models` on RunPod).
 3.  **Core Logic (`app.py`)**: A Gradio-based engine that orchestrates heavy media pipelines with aggressive VRAM management and process isolation.
 4.  **Compatibility (`sitecustomize.py`)**: Injected via `PYTHONPATH` to apply global monkey patches (e.g., BasicSR/Torchvision fixes) across all child processes.
 
@@ -58,7 +58,12 @@ The application follows a "Guardian Process" pattern for maximum stability in co
 
 This application is optimized for **RunPod** and other containerized environments:
 
-- **Model Persistence**: All models are stored in `/app/models`. Map this to a persistent volume to avoid downloads on every boot.
+- **RunPod Auto-Persistence**: The app automatically detects if it's running on RunPod by checking for the `/workspace` mount. If present, it redirects all models, binaries, and outputs to the persistent volume automatically.
+- **Path Mapping**:
+    - **Models**: `/workspace/models`
+    - **Binaries**: `/workspace/bin`
+    - **Outputs**: `/workspace/outputs`
+    - **Temp**: `/workspace/temp`
 - **VRAM Optimization**: Aggressive memory flushing between AI stages ensures stability on 8GB+ GPUs.
 - **Hardware Acceleration**: Automatically detects and utilizes **CUDA** (Torch), **Vulkan** (Real-ESRGAN), and **NVENC** (FFmpeg).
 - **Auto-Cleanup**: Startup routine cleans up temporary files and outputs older than 24 hours to prevent disk exhaustion.
@@ -125,8 +130,8 @@ Use the published GHCR image:
 
 Notes:
 
-- The container will download models on first startup if they are not already present in `/app/models`.
-- For best experience, attach persistent storage so subsequent starts do not re-download models.
+- The container will download models on first startup if they are not already present in the persistent storage (`/workspace/models` on RunPod).
+- For best experience, attach a persistent volume to `/workspace` so subsequent starts do not re-download models.
 
 ## Configuration
 
@@ -144,7 +149,7 @@ The app includes intelligent presets that auto-configure settings:
 
 ```bash
 HF_HUB_ENABLE_HF_TRANSFER=1  # Faster model downloads
-HF_HOME=/app/models/huggingface  # Model cache location
+# Note: HF_HOME, NLTK_DATA, etc. are automatically handled and redirected to /workspace if available.
 ```
 
 ## Project Structure

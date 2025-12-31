@@ -33,13 +33,16 @@ except ImportError:
 
 # Paths - robust to local vs Docker
 BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
-MODELS_DIR = BASE_DIR / "models"
+# Storage directory for persistence (prefer /workspace on RunPod)
+STORAGE_DIR = Path("/workspace") if Path("/workspace").exists() else BASE_DIR
+
+MODELS_DIR = STORAGE_DIR / "models"
 WHISPER_DIR = MODELS_DIR / "whisper"
 HF_HOME = MODELS_DIR / "huggingface"
 NLTK_HOME = MODELS_DIR / "nltk"
 TORCH_HOME = MODELS_DIR / "torch"
 CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
-BIN_DIR = BASE_DIR / "bin"
+BIN_DIR = STORAGE_DIR / "bin"
 
 # Set HuggingFace, NLTK, and Torch cache locations
 os.environ["HF_HOME"] = str(HF_HOME)
@@ -54,6 +57,7 @@ WHISPER_DIR.mkdir(parents=True, exist_ok=True)
 HF_HOME.mkdir(parents=True, exist_ok=True)
 NLTK_HOME.mkdir(parents=True, exist_ok=True)
 TORCH_HOME.mkdir(parents=True, exist_ok=True)
+Path(os.environ["FACEXLIB_HOME"]).mkdir(parents=True, exist_ok=True)
 
 
 def download_whisper_model():
