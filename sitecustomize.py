@@ -12,3 +12,19 @@ except ImportError:
     pass
 except Exception:
     pass
+
+# FIX: Patch gradio_client for compatibility with schemas using additionalProperties: True
+try:
+    from gradio_client import utils
+
+    _orig_get_type = utils.get_type
+
+    def _patched_get_type(schema):
+        if isinstance(schema, bool):
+            # Fallback for boolean schema (e.g. additionalProperties: True)
+            return "Any"
+        return _orig_get_type(schema)
+
+    utils.get_type = _patched_get_type
+except ImportError:
+    pass
