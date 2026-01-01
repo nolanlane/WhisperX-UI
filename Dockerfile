@@ -77,8 +77,9 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1 \
     && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
 
-# Upgrade pip
-RUN pip install --upgrade pip setuptools wheel
+# Upgrade pip and install uv for faster builds
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install uv
 
 # =============================================================================
 # Application Setup
@@ -88,12 +89,12 @@ WORKDIR /app
 # Copy requirements first for layer caching
 COPY requirements.txt .
 
-# Install PyTorch with CUDA 12.1 support
-RUN pip install torch==2.1.2 torchaudio==2.1.2 torchvision==0.16.2 \
+# Install PyTorch with CUDA 12.1 support (using uv for speed)
+RUN uv pip install --system torch==2.1.2 torchaudio==2.1.2 torchvision==0.16.2 \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Install remaining Python dependencies
-RUN pip install -r requirements.txt
+RUN uv pip install --system -r requirements.txt
 
 # =============================================================================
 # Copy Application Files
