@@ -830,131 +830,131 @@ def create_ui():
                             sub_srt = gr.File(label="📄 SRT File", file_count="single")
                             sub_ass = gr.File(label="📄 ASS File", file_count="single")
 
-        # =====================================================================
-        # Tab 2: Visual Restoration
-        # =====================================================================
-        with gr.Tab("✨ Visual Restoration", id="restoration"):
-            gr.Markdown(
-                "### Upscale and Restore Low-Quality Video\n"
-                "*Powered by Real-ESRGAN (Upscaling) and CodeFormer (Face Restoration)*"
-            )
+            # =====================================================================
+            # Tab 2: Visual Restoration
+            # =====================================================================
+            with gr.Tab("✨ Visual Restoration", id="restoration"):
+                gr.Markdown(
+                    "### Upscale and Restore Low-Quality Video\n"
+                    "*Powered by Real-ESRGAN (Upscaling) and CodeFormer (Face Restoration)*"
+                )
 
-            with gr.Row():
-                with gr.Column(scale=1):
-                    vid_input = gr.Video(label="📁 Upload Video", sources=["upload"])
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        vid_input = gr.Video(label="📁 Upload Video", sources=["upload"])
 
-                    with gr.Row():
-                        vid_res = gr.Radio(
-                            choices=["1080p", "4K"],
-                            value="4K",
-                            label="Target Resolution"
-                        )
+                        with gr.Row():
+                            vid_res = gr.Radio(
+                                choices=["1080p", "4K"],
+                                value="4K",
+                                label="Target Resolution"
+                            )
 
-                    with gr.Accordion("⚙️ Tweak Upscaler", open=False):
-                        vid_model = gr.Dropdown(
-                            choices=["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3"],
-                            value="realesrgan-x4plus",
-                            label="Upscaling Model"
-                        )
-                        vid_tile = gr.Slider(
-                            0, 512, value=0, step=32,
-                            label="Tile Size",
-                            info="0 = Auto. Increase if running out of VRAM (try 256 or 128)."
-                        )
-                        gr.Markdown("---")
-                        vid_face_enable = gr.Checkbox(
-                            label="🧑 Face Restoration",
-                            value=False,
-                            info="Enhance faces with CodeFormer (Slow!)"
-                        )
-                        vid_face_w = gr.Slider(
-                            0.0, 1.0, value=0.7, step=0.1,
-                            label="Face Weight",
-                            info="Higher = more restoration, Lower = more original fidelity"
-                        )
+                        with gr.Accordion("⚙️ Tweak Upscaler", open=False):
+                            vid_model = gr.Dropdown(
+                                choices=["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3"],
+                                value="realesrgan-x4plus",
+                                label="Upscaling Model"
+                            )
+                            vid_tile = gr.Slider(
+                                0, 512, value=0, step=32,
+                                label="Tile Size",
+                                info="0 = Auto. Increase if running out of VRAM (try 256 or 128)."
+                            )
+                            gr.Markdown("---")
+                            vid_face_enable = gr.Checkbox(
+                                label="🧑 Face Restoration",
+                                value=False,
+                                info="Enhance faces with CodeFormer (Slow!)"
+                            )
+                            vid_face_w = gr.Slider(
+                                0.0, 1.0, value=0.7, step=0.1,
+                                label="Face Weight",
+                                info="Higher = more restoration, Lower = more original fidelity"
+                            )
 
-                    vid_btn = gr.Button("✨ Restore Video", variant="primary", size="lg", elem_classes=["primary-btn"])
+                        vid_btn = gr.Button("✨ Restore Video", variant="primary", size="lg", elem_classes=["primary-btn"])
 
-                with gr.Column(scale=1, elem_classes=["output-panel"]):
-                    gr.Markdown("#### 📤 Output")
-                    vid_preview = gr.Video(label="Result Preview", interactive=False)
-                    vid_download = gr.File(label="💾 Download File", file_count="single")
+                    with gr.Column(scale=1, elem_classes=["output-panel"]):
+                        gr.Markdown("#### 📤 Output")
+                        vid_preview = gr.Video(label="Result Preview", interactive=False)
+                        vid_download = gr.File(label="💾 Download File", file_count="single")
 
-        # =====================================================================
-        # Tab 3: Toolbox
-        # =====================================================================
-        with gr.Tab("🛠️ Toolbox", id="toolbox"):
-            with gr.Tabs():
-                
-                # Tab 3.1: Burn Subtitles
-                with gr.Tab("🔥 Burn Subtitles"):
-                    gr.Markdown("### Hardcode subtitles into video permanently")
-                    with gr.Row():
-                        with gr.Column():
-                            burn_vid = gr.Video(label="Video Source")
-                            burn_sub = gr.File(label="Subtitle File (.srt, .ass, .vtt)")
-                            burn_font = gr.Slider(10, 100, value=24, step=2, label="Font Size")
-                            burn_btn = gr.Button("🔥 Burn Subtitles", variant="primary")
-                        with gr.Column(elem_classes=["output-panel"]):
-                            burn_out = gr.Video(label="Output Video")
+            # =====================================================================
+            # Tab 3: Toolbox
+            # =====================================================================
+            with gr.Tab("🛠️ Toolbox", id="toolbox"):
+                with gr.Tabs():
 
-                # Tab 3.2: Convert
-                with gr.Tab("🔄 Convert"):
-                    gr.Markdown("### Transcode video formats")
-                    with gr.Row():
-                        with gr.Column():
-                            conv_in = gr.Video(label="Input Video")
-                            with gr.Row():
-                                conv_fmt = gr.Dropdown(["mp4", "mkv", "mov", "webm"], value="mp4", label="Format")
-                                conv_vc = gr.Dropdown(["H.264", "H.265", "H.264 (NVENC)", "H.265 (NVENC)", "VP9", "Copy"], value="H.264 (NVENC)" if HAS_NVENC else "H.264", label="Video Codec")
-                            with gr.Row():
-                                conv_ac = gr.Dropdown(["AAC", "Opus", "Copy"], value="AAC", label="Audio Codec")
-                                conv_crf = gr.Slider(0, 51, value=23, step=1, label="Quality (CRF)", info="Lower is better, 18-28 is standard")
-                            conv_btn = gr.Button("🔄 Convert", variant="primary")
-                        with gr.Column(elem_classes=["output-panel"]):
-                            conv_out = gr.Video(label="Converted Video")
+                    # Tab 3.1: Burn Subtitles
+                    with gr.Tab("🔥 Burn Subtitles"):
+                        gr.Markdown("### Hardcode subtitles into video permanently")
+                        with gr.Row():
+                            with gr.Column():
+                                burn_vid = gr.Video(label="Video Source")
+                                burn_sub = gr.File(label="Subtitle File (.srt, .ass, .vtt)")
+                                burn_font = gr.Slider(10, 100, value=24, step=2, label="Font Size")
+                                burn_btn = gr.Button("🔥 Burn Subtitles", variant="primary")
+                            with gr.Column(elem_classes=["output-panel"]):
+                                burn_out = gr.Video(label="Output Video")
 
-                # Tab 3.3: Extract Audio
-                with gr.Tab("🎵 Extract Audio"):
-                    gr.Markdown("### Extract audio track from video")
-                    with gr.Row():
-                        with gr.Column():
-                            ext_in = gr.Video(label="Input Video")
-                            ext_fmt = gr.Dropdown(["mp3", "wav", "flac", "aac", "opus"], value="mp3", label="Output Format")
-                            ext_btn = gr.Button("🎵 Extract", variant="primary")
-                        with gr.Column(elem_classes=["output-panel"]):
-                            ext_out = gr.Audio(label="Extracted Audio", type="filepath")
+                    # Tab 3.2: Convert
+                    with gr.Tab("🔄 Convert"):
+                        gr.Markdown("### Transcode video formats")
+                        with gr.Row():
+                            with gr.Column():
+                                conv_in = gr.Video(label="Input Video")
+                                with gr.Row():
+                                    conv_fmt = gr.Dropdown(["mp4", "mkv", "mov", "webm"], value="mp4", label="Format")
+                                    conv_vc = gr.Dropdown(["H.264", "H.265", "H.264 (NVENC)", "H.265 (NVENC)", "VP9", "Copy"], value="H.264 (NVENC)" if HAS_NVENC else "H.264", label="Video Codec")
+                                with gr.Row():
+                                    conv_ac = gr.Dropdown(["AAC", "Opus", "Copy"], value="AAC", label="Audio Codec")
+                                    conv_crf = gr.Slider(0, 51, value=23, step=1, label="Quality (CRF)", info="Lower is better, 18-28 is standard")
+                                conv_btn = gr.Button("🔄 Convert", variant="primary")
+                            with gr.Column(elem_classes=["output-panel"]):
+                                conv_out = gr.Video(label="Converted Video")
 
-                # Tab 3.4: Audio Tools
-                with gr.Tab("🎛️ Audio Tools"):
-                    gr.Markdown("### Enhance and separate audio")
-                    with gr.Row():
-                        with gr.Column():
-                            at_in = gr.Audio(label="Input Audio", type="filepath", sources=["upload", "microphone"])
+                    # Tab 3.3: Extract Audio
+                    with gr.Tab("🎵 Extract Audio"):
+                        gr.Markdown("### Extract audio track from video")
+                        with gr.Row():
+                            with gr.Column():
+                                ext_in = gr.Video(label="Input Video")
+                                ext_fmt = gr.Dropdown(["mp3", "wav", "flac", "aac", "opus"], value="mp3", label="Output Format")
+                                ext_btn = gr.Button("🎵 Extract", variant="primary")
+                            with gr.Column(elem_classes=["output-panel"]):
+                                ext_out = gr.Audio(label="Extracted Audio", type="filepath")
 
-                            with gr.Group():
-                                gr.Markdown("#### 🧹 Denoise")
-                                at_denoise = gr.Checkbox(label="Enable DeepFilterNet", value=True)
-                                at_strength = gr.Slider(0.0, 1.0, value=1.0, label="Attenuation Strength")
+                    # Tab 3.4: Audio Tools
+                    with gr.Tab("🎛️ Audio Tools"):
+                        gr.Markdown("### Enhance and separate audio")
+                        with gr.Row():
+                            with gr.Column():
+                                at_in = gr.Audio(label="Input Audio", type="filepath", sources=["upload", "microphone"])
 
-                            with gr.Group():
-                                gr.Markdown("#### 🎸 Stem Separation")
-                                at_separate = gr.Checkbox(label="Enable Demucs", value=False)
-                                at_model = gr.Dropdown(
-                                    ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra"],
-                                    value="htdemucs",
-                                    label="Demucs Model"
-                                )
+                                with gr.Group():
+                                    gr.Markdown("#### 🧹 Denoise")
+                                    at_denoise = gr.Checkbox(label="Enable DeepFilterNet", value=True)
+                                    at_strength = gr.Slider(0.0, 1.0, value=1.0, label="Attenuation Strength")
 
-                            at_btn = gr.Button("🚀 Process Audio", variant="primary")
+                                with gr.Group():
+                                    gr.Markdown("#### 🎸 Stem Separation")
+                                    at_separate = gr.Checkbox(label="Enable Demucs", value=False)
+                                    at_model = gr.Dropdown(
+                                        ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra"],
+                                        value="htdemucs",
+                                        label="Demucs Model"
+                                    )
 
-                        with gr.Column(elem_classes=["output-panel"]):
-                            at_enhanced = gr.Audio(label="✨ Enhanced Audio", type="filepath")
-                            with gr.Accordion("🎸 Separated Stems", open=True):
-                                at_vocals = gr.Audio(label="Vocals", type="filepath")
-                                at_drums = gr.Audio(label="Drums", type="filepath")
-                                at_bass = gr.Audio(label="Bass", type="filepath")
-                                at_other = gr.Audio(label="Other", type="filepath")
+                                at_btn = gr.Button("🚀 Process Audio", variant="primary")
+
+                            with gr.Column(elem_classes=["output-panel"]):
+                                at_enhanced = gr.Audio(label="✨ Enhanced Audio", type="filepath")
+                                with gr.Accordion("🎸 Separated Stems", open=True):
+                                    at_vocals = gr.Audio(label="Vocals", type="filepath")
+                                    at_drums = gr.Audio(label="Drums", type="filepath")
+                                    at_bass = gr.Audio(label="Bass", type="filepath")
+                                    at_other = gr.Audio(label="Other", type="filepath")
 
                 # Connect UI actions
                 sub_btn.click(
