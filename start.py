@@ -193,50 +193,31 @@ def ensure_models_downloaded():
     whisper_dir = MODELS_DIR / "whisper"
 
     if _is_dir_nonempty(whisper_dir):
-        logger.info("  ✓ Models already present; skipping download")
+        logger.info("  ✓ Models already present in /workspace; skipping download")
         return
 
-    logger.info("  ⏬ Models not found; downloading on first run (this may take a while)...")
+    logger.info("  ⏬ Models not found; downloading on first run. This may take 5-10 minutes...")
+    logger.info("     Please check the container logs for detailed progress.")
 
     downloader = BASE_DIR / "download_models.py"
     if not downloader.exists():
         raise RuntimeError(f"download_models.py not found at {downloader}")
 
-    log_path = STORAGE_DIR / "temp" / "model_download.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(log_path, "w", encoding="utf-8") as f:
-        proc = subprocess.run(
-            [sys.executable, str(downloader)],
-            cwd=str(BASE_DIR),
-            stdout=f,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
+    # Run directly to stdout so the user sees progress in the container logs
+    proc = subprocess.run(
+        [sys.executable, str(downloader)],
+        cwd=str(BASE_DIR),
+        text=True,
+    )
 
     if proc.returncode != 0:
-        try:
-            tail = ""
-            with open(log_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-                tail = "".join(lines[-80:])
-        except Exception:
-            tail = "(failed to read model download log)"
-        raise RuntimeError(
-            "Model download failed on first run. "
-            f"See log at {log_path}.\n--- log tail ---\n{tail}"
-        )
+        raise RuntimeError("Model download failed! Check the logs above for details.")
 
     if not _is_dir_nonempty(whisper_dir):
         raise RuntimeError(
-            "Model download completed but Whisper models directory is still empty. "
-            f"Check {log_path}."
+            "Model download script completed but Whisper models directory is still empty."
         )
 
-    try:
-        log_path.unlink(missing_ok=True)
-    except Exception:
-        pass
     logger.info("  ✓ Model download complete")
 
 
