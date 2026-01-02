@@ -101,15 +101,6 @@ RUN uv pip install --system -r requirements.txt
 # =============================================================================
 COPY download_models.py start.py app.py sitecustomize.py ./
 
-# Create necessary directories
-RUN mkdir -p /app/models/whisper \
-    /app/models/huggingface \
-    /app/models/nltk \
-    /app/models/torch \
-    /app/outputs \
-    /app/temp \
-    /app/uploads
-
 FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive

@@ -15,10 +15,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, List, Dict
 
-import torch
-
-import gradio as gr
-
 # =============================================================================
 # Logging Configuration
 # =============================================================================
@@ -70,11 +66,14 @@ os.environ["FACEXLIB_HOME"] = str(MODELS_DIR / "facexlib")
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 # Ensure Gradio uses the persistent temp directory
 os.environ["GRADIO_TEMP_DIR"] = str(TEMP_DIR)
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Now import heavy libraries
+# Now import heavy libraries and torch (after env vars are set)
+import torch
+import gradio as gr
 import whisperx
 import nltk
+
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Check NVENC
 HAS_NVENC = False
@@ -128,6 +127,18 @@ def flush_vram():
         except:
             pass
 
+def check_disk_space(required_gb=2.0, path=STORAGE_DIR):
+    """Ensure there is enough disk space available."""
+    try:
+        stat = shutil.disk_usage(path)
+        free_gb = stat.free / (1024**3)
+        if free_gb < required_gb:
+            raise gr.Error(f"Insufficient disk space! {free_gb:.2f}GB available, but {required_gb}GB required.")
+    except FileNotFoundError:
+        # If path doesn't exist yet, check parent
+        if not path.exists():
+            check_disk_space(required_gb, path.parent)
+
 
 # =============================================================================
 # Media Presets - Returns (batch_size, upscale_model, face_weight)
@@ -155,6 +166,7 @@ def generate_subtitles(
 ) -> Tuple[str, Optional[str], Optional[str]]:
     """Generate subtitles using WhisperX with full feature utilization."""
     flush_vram()
+    check_disk_space(1.0)
     
     if not audio_file:
         raise gr.Error("Please upload an audio or video file.")
@@ -163,6 +175,7 @@ def generate_subtitles(
         raise gr.Error(f"File not found: {audio_file}")
     
     try:
+        gr.Info("Starting transcription process...")
         progress(0.1, desc="Loading WhisperX...")
         compute_type = "float16" if DEVICE == "cuda" else "int8"
         
@@ -279,11 +292,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         flush_vram()
 
 
-def get_free_space_gb():
-    """Check remaining disk space in GB."""
-    stat = os.statvfs(BASE_DIR)
-    return (stat.f_bavail * stat.f_frsize) / (1024**3)
-
 def restore_video(
     video_file: str,
     target_res: str,
@@ -300,11 +308,10 @@ def restore_video(
         return None, None
 
     # Disk space safety check
-    free_gb = get_free_space_gb()
-    if free_gb < 10:
-        raise gr.Error(f"Insufficient disk space ({free_gb:.1f}GB remaining). At least 10GB required for frame extraction.")
+    check_disk_space(10.0) # Video upscaling needs significant space
     
     try:
+        gr.Info("Starting video restoration...")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         name = Path(video_file).stem
         
@@ -452,6 +459,8 @@ def restore_video(
 def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = gr.Progress()) -> Optional[str]:
     """Enhance audio using DeepFilterNet with configurable attenuation."""
     flush_vram()
+    check_disk_space(0.5)
+
     if not audio_file:
         raise gr.Error("Please upload an audio file.")
     
@@ -460,6 +469,7 @@ def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = g
     
     out_dir = None
     try:
+        gr.Info("Enhancing audio...")
         progress(0.2, desc="Running DeepFilterNet...")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_dir = OUTPUT_DIR / f"enhanced_{ts}"
@@ -499,6 +509,8 @@ def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = g
 def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progress()) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Separate audio stems using Demucs with model selection."""
     flush_vram()
+    check_disk_space(2.0)
+
     if not audio_file:
         raise gr.Error("Please upload an audio file.")
     
@@ -506,6 +518,7 @@ def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progr
         raise gr.Error(f"Audio file not found: {audio_file}")
     
     try:
+        gr.Info(f"Separating stems with {model}...")
         progress(0.1, desc=f"Running Demucs ({model})...")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_dir = OUTPUT_DIR / f"stems_{ts}"
@@ -548,6 +561,8 @@ def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progr
 def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.Progress()) -> str:
     """Burn subtitles into video."""
     flush_vram()
+    check_disk_space(2.0)
+
     if not video:
         raise gr.Error("Please upload a video file.")
     if not subs:
@@ -560,6 +575,7 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
         raise gr.Error(f"Subtitle file not found: {sub_path}")
     
     try:
+        gr.Info("Burning subtitles...")
         progress(0.2, desc="Burning subtitles...")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out = OUTPUT_DIR / f"{Path(video).stem}_subtitled_{ts}.mp4"
@@ -595,6 +611,8 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
 def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, progress: gr.Progress = gr.Progress()) -> Optional[str]:
     """Convert video format."""
     flush_vram()
+    check_disk_space(2.0)
+
     if not video:
         raise gr.Error("Please upload a video file.")
     
@@ -602,6 +620,7 @@ def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, prog
         raise gr.Error(f"Video file not found: {video}")
     
     try:
+        gr.Info("Converting video...")
         progress(0.2, desc="Converting...")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out = OUTPUT_DIR / f"{Path(video).stem}_converted_{ts}.{fmt}"
@@ -639,6 +658,8 @@ def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, prog
 def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()) -> Optional[str]:
     """Extract audio from video."""
     flush_vram()
+    check_disk_space(0.5)
+
     if not video:
         raise gr.Error("Please upload a video file.")
     
@@ -646,6 +667,7 @@ def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()) -
         raise gr.Error(f"Video file not found: {video}")
     
     try:
+        gr.Info("Extracting audio...")
         progress(0.2, desc="Extracting audio...")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out = OUTPUT_DIR / f"{Path(video).stem}_audio_{ts}.{fmt}"
