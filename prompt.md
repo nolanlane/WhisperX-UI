@@ -19,11 +19,12 @@ You are a Principal Full-Stack AI Engineer. Generate **complete, error-free, pro
 
 | Tool | Implementation | CRITICAL Notes |
 |------|----------------|----------------|
-| **WhisperX** | Python library | Use `compute_type="float16"` on GPU, `"int8"` on CPU. Delete model after use. |
+| **WhisperX** | Python library (v3.7.4) | Use `compute_type="float16"` on GPU, `"int8"` on CPU. Delete model after use. |
+| **PyTorch** | v2.8.0 (cu128) | Optimized for January 2026 stack. |
 | **Demucs** | `subprocess` | Run via `python -m demucs`. Memory-isolated from main process. |
 | **Real-ESRGAN** | `realesrgan-ncnn-vulkan` binary | Download Linux binary from GitHub releases v0.2.0. Models: `realesrgan-x4plus` (live action), `realesr-animevideov3` (anime). |
 | **CodeFormer** | `subprocess` calling `inference_codeformer.py` | Clone repo, install via `python basicsr/setup.py develop`. |
-| **DeepFilterNet** | CLI `deepFilter` | Installed via pip as `deepfilternet`. Use `--pf` flag for aggressive noise reduction. |
+| **DeepFilterNet** | CLI `df-enhance` | Installed via pip as `deepfilternet`. Use `--pf` flag for aggressive noise reduction. |
 | **FFmpeg** | Direct subprocess | Check for `h264_nvenc` at startup. Fallback to `libx264`. Always use `-movflags +faststart`. |
 
 ---
@@ -32,11 +33,12 @@ You are a Principal Full-Stack AI Engineer. Generate **complete, error-free, pro
 
 ```
 WhisperX-UI/
-├── app.py                  # Main Gradio application
-├── download_models.py      # Build-time model downloader  
+├── app.py                  # Main Gradio application (v5.0.0+)
+├── download_models.py      # Build-time model downloader with S3/GitHub fallbacks
 ├── start.py                # Startup validation script (runs before app.py)
-├── requirements.txt        # Pinned dependencies
-├── Dockerfile              # Production container config
+├── sitecustomize.py        # Global patches (NumPy 2.0, BasicSR, Gradio Client)
+├── requirements.txt        # Pinned dependencies (v3.7.4 stack)
+├── Dockerfile              # Production container config (CUDA 12.8)
 ├── .dockerignore           # Exclude __pycache__, .git, *.pyc, temp/, outputs/
 └── README.md               # Setup and usage instructions
 ```
@@ -51,8 +53,13 @@ WhisperX-UI/
 #!/usr/bin/env python3
 """Validate all dependencies before starting the app."""
 import sys
+import os
 import subprocess
 from pathlib import Path
+
+# Ensure sitecustomize is loaded
+BASE_DIR = Path(__file__).parent
+os.environ["PYTHONPATH"] = f"{BASE_DIR}:{os.environ.get('PYTHONPATH', '')}"
 
 REQUIRED_BINARIES = [
     ("ffmpeg", ["ffmpeg", "-version"]),
@@ -60,12 +67,12 @@ REQUIRED_BINARIES = [
 ]
 
 OPTIONAL_BINARIES = [
-    ("deepFilter", ["deepFilter", "--help"]),
+    ("df-enhance", ["df-enhance", "--help"]),
 ]
 
 REQUIRED_PATHS = [
     Path("/app/bin/realesrgan-ncnn-vulkan"),
-    Path("/app/CodeFormer/inference_codeformer.py"),
+    Path("/app/models/CodeFormer/inference_codeformer.py"),
 ]
 
 def check_binary(name, cmd):

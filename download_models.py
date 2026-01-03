@@ -21,16 +21,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Downloader")
 
-# FIX: Global monkey patch for BasicSR compatibility with torchvision >= 0.16
-# BasicSR expects torchvision.transforms.functional_tensor which was removed
-try:
-    import torchvision
-    import torchvision.transforms.functional as F
-    import sys
-    sys.modules['torchvision.transforms.functional_tensor'] = F
-except ImportError:
-    pass
-
 # Paths - robust to local vs Docker
 BASE_DIR = Path("/app") if Path("/app").exists() else Path(__file__).parent
 # Storage directory for persistence (prefer /workspace on RunPod)
@@ -63,14 +53,21 @@ def clear_all_model_caches():
         Path.home() / ".cache" / "whisper",
         Path.home() / ".cache" / "huggingface", 
         Path.home() / ".cache" / "whisperx",
-        Path.home() / ".cache" / "torch" / "hub"
+        Path.home() / ".cache" / "torch" / "hub",
+        Path("/tmp/whisperx")
     ]
     
     logger.info("🧹 Clearing all model cache directories...")
     for cache_dir in cache_dirs:
         if cache_dir.exists():
             logger.info(f"  Removing: {cache_dir}")
-            shutil.rmtree(cache_dir, ignore_errors=True)
+            try:
+                if cache_dir.is_dir():
+                    shutil.rmtree(cache_dir, ignore_errors=True)
+                else:
+                    cache_dir.unlink(missing_ok=True)
+            except Exception as e:
+                logger.warning(f"  Failed to remove {cache_dir}: {e}")
     
     # Recreate essential directories
     WHISPER_DIR.mkdir(parents=True, exist_ok=True)

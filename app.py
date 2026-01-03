@@ -28,16 +28,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("UniversalMediaStudio")
 
-# FIX: Global monkey patch for BasicSR compatibility with torchvision >= 0.16
-# BasicSR expects torchvision.transforms.functional_tensor which was removed
-try:
-    import torchvision
-    import torchvision.transforms.functional as F
-    import sys
-    sys.modules['torchvision.transforms.functional_tensor'] = F
-except ImportError:
-    pass
-
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -86,14 +76,21 @@ def clear_model_cache():
         Path.home() / ".cache" / "whisper",
         Path.home() / ".cache" / "huggingface", 
         Path.home() / ".cache" / "whisperx",
-        Path.home() / ".cache" / "torch" / "hub"
+        Path.home() / ".cache" / "torch" / "hub",
+        Path("/tmp/whisperx")
     ]
     
     logger.info("🧹 Clearing model cache directories...")
     for cache_dir in cache_dirs:
         if cache_dir.exists():
             logger.info(f"  Removing: {cache_dir}")
-            shutil.rmtree(cache_dir, ignore_errors=True)
+            try:
+                if cache_dir.is_dir():
+                    shutil.rmtree(cache_dir, ignore_errors=True)
+                else:
+                    cache_dir.unlink(missing_ok=True)
+            except Exception as e:
+                logger.warning(f"  Failed to remove {cache_dir}: {e}")
     
     # Recreate essential directories
     WHISPER_DIR.mkdir(parents=True, exist_ok=True)
@@ -1123,7 +1120,45 @@ def create_ui():
                                     at_bass = gr.Audio(label="Bass", type="filepath")
                                     at_other = gr.Audio(label="Other", type="filepath")
 
+                    # Tab 3.5: System Maintenance
+                    with gr.Tab("⚙️ System"):
+                        gr.Markdown("### System Maintenance")
+                        with gr.Row():
+                            with gr.Column():
+                                gr.Markdown(
+                                    "#### 🧹 Model Cache Management\n"
+                                    "If you encounter 'Checksum Mismatch' errors or transcription fails unexpectedly, "
+                                    "try clearing the model cache. This will force the app to re-download the required AI models."
+                                )
+                                clear_cache_btn = gr.Button("🗑️ Clear All Model Caches", variant="stop")
+                                cache_status = gr.Markdown("*Status: Ready*")
+                            
+                            with gr.Column(elem_classes=["output-panel"]):
+                                gr.Markdown(
+                                    "#### 📊 Storage Info\n"
+                                    "Monitor disk usage on your instance."
+                                )
+                                storage_info_btn = gr.Button("🔄 Refresh Storage Info")
+                                storage_display = gr.Code(label="Disk Usage", language="bash")
+
                 # Connect UI actions
+                def handle_clear_cache():
+                    try:
+                        clear_model_cache()
+                        return "✅ Cache cleared successfully! Models will be re-downloaded on next use."
+                    except Exception as e:
+                        return f"❌ Error clearing cache: {str(e)}"
+
+                def get_storage_info():
+                    try:
+                        result = subprocess.run(["df", "-h", str(STORAGE_DIR)], capture_output=True, text=True)
+                        return result.stdout
+                    except Exception as e:
+                        return f"Error: {str(e)}"
+
+                clear_cache_btn.click(fn=handle_clear_cache, outputs=[cache_status])
+                storage_info_btn.click(fn=get_storage_info, outputs=[storage_display])
+
                 sub_btn.click(
                     fn=generate_subtitles,
                     inputs=[sub_input, sub_model, sub_batch, sub_lang, sub_token, sub_diarize],
