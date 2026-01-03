@@ -33,39 +33,7 @@ try:
 except ImportError:
     pass
 
-# 4. FIX: Patch gradio_client for compatibility with schemas using additionalProperties: True
-# This fixes crashes in gradio 4.44.1 when schemas contain boolean values (True/False)
-try:
-    # Handle different import locations/versions safely
-    import gradio_client.utils as client_utils
-
-    # Patch 1: get_type (used in some contexts)
-    if hasattr(client_utils, 'get_type'):
-        _orig_get_type = client_utils.get_type
-
-        def _patched_get_type(schema):
-            if isinstance(schema, bool):
-                return "Any"
-            return _orig_get_type(schema)
-
-        client_utils.get_type = _patched_get_type
-
-    # Patch 2: _json_schema_to_python_type (used in others)
-    if hasattr(client_utils, '_json_schema_to_python_type'):
-        _orig_json_schema_to_python_type = client_utils._json_schema_to_python_type
-
-        def _patched_json_schema_to_python_type(schema, defs):
-            if schema is True:
-                return "Any"
-            if schema is False:
-                return "None"
-            return _orig_json_schema_to_python_type(schema, defs)
-
-        client_utils._json_schema_to_python_type = _patched_json_schema_to_python_type
-
-except ImportError:
-    pass
 except Exception as e:
-    print(f"[UMS] Warning: Failed to patch gradio_client: {e}")
+    print(f"[UMS] Warning: Failed to patch NumPy/BasicSR: {e}")
 
 print("[UMS] sitecustomize.py loaded successfully.")

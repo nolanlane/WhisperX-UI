@@ -21,11 +21,12 @@ You are a Principal Full-Stack AI Engineer. Generate **complete, error-free, pro
 |------|----------------|----------------|
 | **WhisperX** | Python library (v3.7.4) | Use `compute_type="float16"` on GPU, `"int8"` on CPU. Delete model after use. |
 | **PyTorch** | v2.8.0 (cu128) | Optimized for January 2026 stack. |
+| **Gradio** | v5.0.0+ | Modern dashboard layout. No legacy v4 patches. |
 | **Demucs** | `subprocess` | Run via `python -m demucs`. Memory-isolated from main process. |
-| **Real-ESRGAN** | `realesrgan-ncnn-vulkan` binary | Download Linux binary from GitHub releases v0.2.0. Models: `realesrgan-x4plus` (live action), `realesr-animevideov3` (anime). |
+| **Real-ESRGAN** | `realesrgan-ncnn-vulkan` binary | Download Linux binary from GitHub releases v0.2.0. |
 | **CodeFormer** | `subprocess` calling `inference_codeformer.py` | Clone repo, install via `python basicsr/setup.py develop`. |
-| **DeepFilterNet** | CLI `df-enhance` | Installed via pip as `deepfilternet`. Use `--pf` flag for aggressive noise reduction. |
-| **FFmpeg** | Direct subprocess | Check for `h264_nvenc` at startup. Fallback to `libx264`. Always use `-movflags +faststart`. |
+| **DeepFilterNet** | CLI `df-enhance` | Installed via pip as `deepfilternet`. |
+| **FFmpeg** | Direct subprocess | Use `h264_nvenc` or `av1_nvenc` when available. |
 
 ---
 
@@ -438,103 +439,62 @@ with gr.Blocks(
 ## 6. Dockerfile
 
 ```dockerfile
-FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04 AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV TZ=UTC
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=1
-ENV HF_HUB_ENABLE_HF_TRANSFER=1
-ENV HF_HOME=/app/models/huggingface
+# ... install system deps ...
 
-# System dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 python3.10-dev python3.10-venv python3-pip \
-    build-essential cmake git wget curl aria2 unzip \
-    ffmpeg libsndfile1 libsndfile1-dev \
-    libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender1 \
-    libvulkan1 mesa-vulkan-drivers \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
-
-WORKDIR /app
-
-# Install PyTorch FIRST with CUDA 12.1
-RUN pip install --upgrade pip && \
-    pip install torch==2.1.2 torchaudio==2.1.2 torchvision==0.16.2 \
-    --index-url https://download.pytorch.org/whl/cu121
+# Install PyTorch FIRST with CUDA 12.8
+RUN uv pip install --system torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 \
+    --index-url https://download.pytorch.org/whl/cu128
 
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN uv pip install --system -r requirements.txt
 
-# CodeFormer
-RUN git clone https://github.com/sczhou/CodeFormer.git /app/CodeFormer && \
-    cd /app/CodeFormer && pip install -r requirements.txt && \
-    python basicsr/setup.py develop
+# ... (rest of build) ...
 
-# Real-ESRGAN binary
-RUN mkdir -p /app/bin && cd /app/bin && \
-    wget -q https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip && \
-    unzip -o realesrgan-ncnn-vulkan-20220424-ubuntu.zip && \
-    chmod +x realesrgan-ncnn-vulkan && rm *.zip
-
-ENV PATH="/app/bin:${PATH}"
-
-COPY download_models.py start.py app.py ./
-RUN mkdir -p /app/models/whisper /app/models/huggingface /app/outputs /app/temp
-
-# Download models at build time
-RUN python download_models.py
-
-EXPOSE 7860
-
-HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:7860/ || exit 1
-
-CMD ["python", "start.py"]
+ENV PATH="/app/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PYTHONPATH="/app"
 ```
 
 ---
 
 ## 7. requirements.txt
 
-```
+```text
 # WhisperX stack
-whisperx==3.1.5
-faster-whisper==1.0.3
-ctranslate2==4.4.0
-pyannote.audio==3.1.1
+whisperx==3.7.4
+pyannote.audio==3.3.2
+ctranslate2>=4.5.0
+faster-whisper>=1.1.1
+nltk>=3.9.1
+av<16.0.0
+triton>=3.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'
 
 # Gradio
-gradio==4.44.1
+gradio==5.0.0
 
-# Audio
+# Audio/Video Processing
 demucs==4.0.1
 deepfilternet==0.5.6
 soundfile==0.12.1
 librosa==0.10.2
-
-# Video/Image
-ffmpeg-python==0.2.0
 opencv-python-headless==4.9.0.80
-imageio==2.34.0
 
-# CodeFormer
+# Restored Utils
 basicsr==1.4.2
 facexlib==0.3.0
-gfpgan==1.3.8
+lpips==0.1.4
+einops==0.7.0
 
-# CRITICAL: numpy < 2 for compatibility
-numpy<2
-scipy==1.12.0
-Pillow==10.2.0
-tqdm==4.66.2
-
-# HuggingFace
-huggingface_hub[hf_transfer]==0.21.4
-hf_transfer==0.1.5
+# Core Utilities
+numpy>=2.0.2
+scipy>=1.12.0
+Pillow>=10.2.0
+tqdm>=4.66.2
+requests>=2.31.0
+huggingface_hub[hf_transfer]>=0.25.1
+transformers>=4.48.0
+hf_transfer>=0.1.5
 ```
 
 ---

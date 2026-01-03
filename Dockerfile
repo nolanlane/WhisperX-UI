@@ -153,8 +153,8 @@ COPY --from=builder /app/start.py /app/start.py
 COPY --from=builder /app/app.py /app/app.py
 COPY --from=builder /app/sitecustomize.py /app/sitecustomize.py
 
-ENV PATH="/app/bin:${PATH}"
-ENV PYTHONPATH="/app${PYTHONPATH:+:${PYTHONPATH}}"
+ENV PATH="/app/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PYTHONPATH="/app"
 
 RUN mkdir -p /app/models/whisper \
     /app/models/huggingface \

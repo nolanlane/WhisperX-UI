@@ -193,13 +193,13 @@ The interface follows UX best practices:
 ## Requirements
 
 ### Hardware
-- NVIDIA GPU with CUDA 12.1+ support
+- NVIDIA GPU with CUDA 12.1+ support (RTX 30-series/40-series recommended)
 - Minimum 8GB VRAM (16GB+ recommended for 4K processing)
 - 32GB+ system RAM recommended
 
 ### Software
 - Python 3.10+
-- CUDA Toolkit 12.1
+- CUDA Toolkit 12.8 (Containerized)
 - FFmpeg with NVENC support (optional, for hardware encoding)
 
 ## Troubleshooting
