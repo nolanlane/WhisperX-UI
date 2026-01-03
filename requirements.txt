@@ -20,8 +20,8 @@ triton>=3.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'
 gradio==5.0.0
 
 # Audio Processing
-demucs==4.0.1
-deepfilternet==0.5.6
+# deepfilternet and demucs are installed in isolated environments in Dockerfile 
+# to avoid NumPy 2.0 conflicts with WhisperX 3.7.4
 soundfile==0.12.1
 librosa==0.10.2
 pydub==0.25.1
@@ -30,13 +30,11 @@ pydub==0.25.1
 opencv-python-headless==4.9.0.80
 
 # CodeFormer dependencies
-basicsr==1.4.2
-facexlib==0.3.0
-lpips==0.1.4
-einops==0.7.0
+# basicsr, facexlib, lpips, einops are installed in isolated venv in Dockerfile
+# to avoid NumPy 2.0 conflicts with WhisperX 3.7.4
 
 # Core Utilities
-numpy>=1.24.4,<2.0.0
+numpy>=2.0.2,<2.1.0
 scipy>=1.12.0
 Pillow>=10.2.0
 tqdm>=4.66.2

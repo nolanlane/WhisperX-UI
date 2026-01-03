@@ -494,10 +494,15 @@ def restore_video(
                     "If you're running in Docker/RunPod, restart the pod so start.py can fetch CodeFormer."
                 )
 
+            # Use the isolated CodeFormer virtual environment to avoid NumPy conflicts
+            cf_python = "/opt/venv/codeformer/bin/python"
+            if not os.path.exists(cf_python):
+                cf_python = sys.executable # Fallback for local dev
+
             progress(0.6, desc="Restoring faces with CodeFormer...")
             try:
                 subprocess.run([
-                    sys.executable, str(cf_script),
+                    cf_python, str(cf_script),
                     "-w", str(face_weight),
                     "--input_path", str(upscaled_dir),
                     "--output_path", str(restored_dir),
@@ -646,12 +651,12 @@ def separate_stems(audio_file, model, *args, progress=gr.Progress()) -> Tuple[Op
         out_dir = OUTPUT_DIR / f"stems_{ts}"
         
         # Check if Demucs is available
-        import importlib.util
-        if importlib.util.find_spec("demucs") is None:
-            raise gr.Error("Demucs is not installed in the current environment.")
+        demucs_bin = shutil.which("demucs")
+        if demucs_bin is None:
+            raise gr.Error("Demucs is not installed or not in PATH.")
 
         cmd = [
-            sys.executable, "-m", "demucs",
+            demucs_bin,
             "--out", str(out_dir), "-n", model, audio_file
         ]
         if DEVICE == "cuda":

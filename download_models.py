@@ -286,17 +286,21 @@ def download_codeformer_models():
         return
     
     try:
+        cf_python = "/opt/venv/codeformer/bin/python"
+        if not os.path.exists(cf_python):
+            cf_python = sys.executable
+
         # Run CodeFormer's download script
         download_script = CODEFORMER_DIR / "scripts" / "download_pretrained_models.py"
         
         if download_script.exists():
             subprocess.run(
-                [sys.executable, str(download_script), "facelib"],
+                [cf_python, str(download_script), "facelib"],
                 cwd=str(CODEFORMER_DIR),
                 check=True
             )
             subprocess.run(
-                [sys.executable, str(download_script), "CodeFormer"],
+                [cf_python, str(download_script), "CodeFormer"],
                 cwd=str(CODEFORMER_DIR),
                 check=True
             )
@@ -315,14 +319,22 @@ def download_demucs_models():
     logger.info("=" * 60)
     
     try:
-        from demucs.pretrained import get_model
-        
+        demucs_bin = "/app/bin/demucs"
+        if not os.path.exists(demucs_bin):
+            demucs_bin = "/opt/venv/demucs/bin/demucs"
+
         # Models offered in app.py UI
         models = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra"]
         for model_name in models:
             logger.info(f"  Downloading: {model_name}...")
-            model = get_model(model_name)
-            del model
+            # Run demucs with a dummy tiny file or just --help to trigger model download
+            # Actually, demucs doesn't have a simple 'download-only' flag, 
+            # but we can call the internal downloader via the venv's python
+            venv_python = "/opt/venv/demucs/bin/python"
+            subprocess.run([
+                venv_python, "-c", 
+                f"from demucs.pretrained import get_model; get_model('{model_name}')"
+            ], check=True)
             logger.info(f"  ✅ {model_name} ready")
             
     except Exception as e:
@@ -336,11 +348,11 @@ def download_deepfilternet_models():
     logger.info("=" * 60)
     
     try:
-        from df.enhance import init_df
-        
-        # Initialize to trigger download
-        model, df_state, _ = init_df()
-        del model, df_state
+        venv_python = "/opt/venv/deepfilternet/bin/python"
+        subprocess.run([
+            venv_python, "-c",
+            "from df.enhance import init_df; init_df()"
+        ], check=True)
         logger.info("✅ DeepFilterNet models downloaded!")
         
     except Exception as e:

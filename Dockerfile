@@ -86,6 +86,25 @@ RUN pip install --upgrade pip setuptools wheel && \
 # =============================================================================
 WORKDIR /app
 
+# Create isolated environments for conflicting audio tools
+RUN python3 -m venv /opt/venv/deepfilternet && \
+    /opt/venv/deepfilternet/bin/pip install --upgrade pip && \
+    /opt/venv/deepfilternet/bin/pip install deepfilternet==0.5.6
+
+RUN python3 -m venv /opt/venv/demucs && \
+    /opt/venv/demucs/bin/pip install --upgrade pip && \
+    /opt/venv/demucs/bin/pip install demucs==4.0.1
+
+RUN python3 -m venv /opt/venv/codeformer && \
+    /opt/venv/codeformer/bin/pip install --upgrade pip && \
+    /opt/venv/codeformer/bin/pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128 && \
+    /opt/venv/codeformer/bin/pip install basicsr==1.4.2 facexlib==0.3.0 lpips==0.1.4 einops==0.7.0 opencv-python-headless
+
+# Link isolated binaries to a known location
+RUN mkdir -p /app/bin && \
+    ln -s /opt/venv/deepfilternet/bin/df-enhance /app/bin/df-enhance && \
+    ln -s /opt/venv/demucs/bin/demucs /app/bin/demucs
+
 # Copy requirements first for layer caching
 COPY requirements.txt .
 
@@ -147,6 +166,8 @@ WORKDIR /app
 
 COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /app/bin /app/bin
 
 COPY --from=builder /app/download_models.py /app/download_models.py
 COPY --from=builder /app/start.py /app/start.py

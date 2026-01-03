@@ -25,7 +25,7 @@ You are a Principal Full-Stack AI Engineer. Generate **complete, error-free, pro
 | **Demucs** | `subprocess` | Run via `python -m demucs`. Memory-isolated from main process. |
 | **Real-ESRGAN** | `realesrgan-ncnn-vulkan` binary | Download Linux binary from GitHub releases v0.2.0. |
 | **CodeFormer** | `subprocess` calling `inference_codeformer.py` | Clone repo, install via `python basicsr/setup.py develop`. |
-| **DeepFilterNet** | CLI `df-enhance` | Installed via pip as `deepfilternet`. |
+| **DeepFilterNet** | CLI `df-enhance` | Isolated venv in Docker to avoid NumPy conflict. |
 | **FFmpeg** | Direct subprocess | Use `h264_nvenc` or `av1_nvenc` when available. |
 
 ---
@@ -473,21 +473,22 @@ triton>=3.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'
 # Gradio
 gradio==5.0.0
 
-# Audio/Video Processing
-demucs==4.0.1
-deepfilternet==0.5.6
+# Audio Processing
+# deepfilternet and demucs are installed in isolated environments in Dockerfile 
+# to avoid NumPy 2.0 conflicts with WhisperX 3.7.4
 soundfile==0.12.1
 librosa==0.10.2
+pydub==0.25.1
+
+# Video Processing
 opencv-python-headless==4.9.0.80
 
-# Restored Utils
-basicsr==1.4.2
-facexlib==0.3.0
-lpips==0.1.4
-einops==0.7.0
+# CodeFormer dependencies
+# basicsr, facexlib, lpips, einops are installed in isolated venv in Dockerfile
+# to avoid NumPy 2.0 conflicts with WhisperX 3.7.4
 
 # Core Utilities
-numpy>=1.24.4,<2.0.0
+numpy>=2.0.2,<2.1.0
 scipy>=1.12.0
 Pillow>=10.2.0
 tqdm>=4.66.2
