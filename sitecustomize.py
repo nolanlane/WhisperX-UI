@@ -51,4 +51,15 @@ except ImportError:
 except Exception as e:
     print(f"[UMS] Warning: Failed to patch gradio_client: {e}")
 
+# 4. FIX: Mitigate CVE-2025-32434 (RCE in torch.load)
+# Globally force weights_only=True for torch.load if it's not specified
+import torch
+_orig_torch_load = torch.load
+def _patched_torch_load(f, map_location=None, pickle_module=None, weights_only=None, **kwargs):
+    if weights_only is None:
+        # In Jan 2026, we enforce this for all untrusted/legacy loads
+        weights_only = True
+    return _orig_torch_load(f, map_location=map_location, pickle_module=pickle_module, weights_only=weights_only, **kwargs)
+torch.load = _patched_torch_load
+
 print("[UMS] sitecustomize.py loaded successfully.")

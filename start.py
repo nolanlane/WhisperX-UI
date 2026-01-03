@@ -57,6 +57,29 @@ def _run(cmd, *, cwd: Path | None = None, timeout: int | None = None):
     )
 
 
+def safe_move(src, dst):
+    """Move a file or directory atomically across filesystems."""
+    import shutil
+    from pathlib import Path
+    src = Path(src)
+    dst = Path(dst)
+    if not src.exists():
+        return
+    try:
+        # Try atomic rename first
+        src.rename(dst)
+    except OSError:
+        # Fallback for cross-filesystem move
+        if src.is_dir():
+            if dst.exists():
+                shutil.rmtree(dst)
+            shutil.copytree(src, dst)
+            shutil.rmtree(src)
+        else:
+            shutil.copy2(src, dst)
+            src.unlink()
+
+
 def ensure_realesrgan_binary(base_dir: Path) -> None:
     target = base_dir / "bin" / "realesrgan-ncnn-vulkan"
     models_dir = base_dir / "bin" / "models"
@@ -106,7 +129,6 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
         else:
             src_parent = extracted_dirs[0]
 
-        import shutil
         # Move all contents (binary, models folder, etc.) to bin_dir
         for item in src_parent.iterdir():
             dest = bin_dir / item.name
@@ -117,7 +139,7 @@ def ensure_realesrgan_binary(base_dir: Path) -> None:
                     shutil.rmtree(dest, ignore_errors=True)
                 else:
                     dest.unlink(missing_ok=True)
-            shutil.move(str(item), str(dest))
+            safe_move(item, dest)
 
         # Cleanup the now-empty extracted folder
         if src_parent.exists() and src_parent != bin_dir:

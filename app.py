@@ -11,6 +11,7 @@ import json
 import shutil
 import logging
 import subprocess
+import shlex
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, List, Dict
@@ -75,23 +76,55 @@ import nltk
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Check NVENC
+
+def clear_model_cache():
+    """Clear all possible model cache directories to resolve checksum issues."""
+    cache_dirs = [
+        WHISPER_DIR,
+        MODELS_DIR / "whisper", 
+        MODELS_DIR / "alignment",
+        Path.home() / ".cache" / "whisper",
+        Path.home() / ".cache" / "huggingface", 
+        Path.home() / ".cache" / "whisperx",
+        Path.home() / ".cache" / "torch" / "hub"
+    ]
+    
+    logger.info("🧹 Clearing model cache directories...")
+    for cache_dir in cache_dirs:
+        if cache_dir.exists():
+            logger.info(f"  Removing: {cache_dir}")
+            shutil.rmtree(cache_dir, ignore_errors=True)
+    
+    # Recreate essential directories
+    WHISPER_DIR.mkdir(parents=True, exist_ok=True)
+    (MODELS_DIR / "alignment").mkdir(parents=True, exist_ok=True)
+    
+    logger.info("✅ Cache clearing completed")
+
+
+# Check NVENC and AV1 support
 HAS_NVENC = False
+HAS_AV1_NVENC = False
 try:
     r = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True)
     HAS_NVENC = "h264_nvenc" in r.stdout
+    HAS_AV1_NVENC = "av1_nvenc" in r.stdout
 except:
     pass
 
 
 def cleanup_old_outputs(max_age_hours=24):
-    """Remove output files and directories older than max_age_hours."""
+    """Remove output files and directories older than max_age_hours with network-volume resilience."""
     if not OUTPUT_DIR.exists():
         return
     now = datetime.now().timestamp()
+    # Buffer to avoid deleting files currently being written (especially on network volumes)
+    write_buffer_seconds = 60 
     for item in OUTPUT_DIR.iterdir():
         try:
-            if (now - item.stat().st_mtime) > (max_age_hours * 3600):
+            mtime = item.stat().st_mtime
+            # Check if file has been modified recently (to avoid deleting active writes)
+            if (now - mtime) > (max_age_hours * 3600) and (now - mtime) > write_buffer_seconds:
                 if item.is_file():
                     item.unlink()
                 elif item.is_dir():
@@ -117,15 +150,19 @@ cleanup_temp_dir()
 cleanup_old_outputs()
 
 def flush_vram():
-    """Clear GPU cache and collect garbage."""
+    """Clear GPU cache, collect garbage, and clear IPC memory."""
     gc.collect()
     if torch.cuda.is_available():
+        # Clear specific caches that faster-whisper/pyannote might leave behind
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
         try:
+            # Force synchronization to ensure all kernels are finished
             torch.cuda.synchronize()
         except:
             pass
+    # Additional garbage collection for heavy model objects
+    gc.collect()
 
 def check_disk_space(required_gb=2.0, path=STORAGE_DIR):
     """Ensure there is enough disk space available."""
@@ -138,6 +175,18 @@ def check_disk_space(required_gb=2.0, path=STORAGE_DIR):
         # If path doesn't exist yet, check parent
         if not path.exists():
             check_disk_space(required_gb, path.parent)
+
+def safe_move(src: Path, dst: Path):
+    """Move a file atomically even across filesystems."""
+    if not src.exists():
+        return
+    try:
+        # Try atomic rename first (only works on same filesystem)
+        src.rename(dst)
+    except OSError:
+        # Fallback for cross-filesystem move
+        shutil.copy2(src, dst)
+        src.unlink()
 
 
 # =============================================================================
@@ -155,19 +204,34 @@ PRESETS = {
 # Backend Functions
 # =============================================================================
 
+def get_path(input_val):
+    """Robustly extract path from various Gradio component return types."""
+    if input_val is None:
+        return None
+    if isinstance(input_val, dict):
+        return input_val.get("path") or input_val.get("name")
+    if isinstance(input_val, (list, tuple)) and len(input_val) > 0:
+        return get_path(input_val[0])
+    if hasattr(input_val, "name"):
+        return input_val.name
+    return str(input_val)
+
+
 def generate_subtitles(
-    audio_file: str,
-    model_size: str,
-    batch_size: int,
-    language: str,
-    hf_token: str,
-    enable_diarization: bool,
-    progress: gr.Progress = gr.Progress()
+    audio_file,
+    model_size,
+    batch_size,
+    language,
+    hf_token,
+    enable_diarization,
+    *args,
+    progress=gr.Progress()
 ) -> Tuple[str, Optional[str], Optional[str]]:
     """Generate subtitles using WhisperX with full feature utilization."""
     flush_vram()
     check_disk_space(1.0)
     
+    audio_file = get_path(audio_file)
     if not audio_file:
         raise gr.Error("Please upload an audio or video file.")
     
@@ -183,11 +247,38 @@ def generate_subtitles(
         audio = whisperx.load_audio(audio_file)
         
         progress(0.4, desc="Transcribing...")
-        model = whisperx.load_model(
-            model_size, DEVICE,
-            compute_type=compute_type,
-            download_root=str(WHISPER_DIR)
-        )
+        
+        def _load_model():
+            return whisperx.load_model(
+                model_size, DEVICE,
+                compute_type=compute_type,
+                download_root=str(WHISPER_DIR)
+            )
+
+        try:
+            model = _load_model()
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "sha256" in err_msg or "checksum" in err_msg:
+                logger.warning(f"Checksum mismatch for {model_size}. Clearing all model caches and retrying...")
+                clear_model_cache()
+                
+                # Retry with force reload
+                try:
+                    model = _load_model()
+                    logger.info("✅ Model loaded successfully after cache clear")
+                except Exception as retry_e:
+                    if "sha256" in str(retry_e).lower() or "checksum" in str(retry_e).lower():
+                        # Second retry with different approach
+                        logger.warning("Second checksum failure, trying with fresh download...")
+                        import time
+                        time.sleep(2)  # Brief pause
+                        model = _load_model()
+                    else:
+                        raise retry_e
+            else:
+                raise e
+
         result = model.transcribe(
             audio,
             batch_size=batch_size,
@@ -200,11 +291,38 @@ def generate_subtitles(
         flush_vram()
 
         progress(0.6, desc="Aligning timestamps...")
-        model_a, metadata = whisperx.load_align_model(
-            language_code=detected_lang, 
-            device=DEVICE,
-            model_dir=str(MODELS_DIR / "alignment")
-        )
+        
+        def _load_align():
+            return whisperx.load_align_model(
+                language_code=detected_lang, 
+                device=DEVICE,
+                model_dir=str(MODELS_DIR / "alignment")
+            )
+            
+        try:
+            model_a, metadata = _load_align()
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "sha256" in err_msg or "checksum" in err_msg:
+                logger.warning(f"Checksum mismatch for alignment model. Clearing all model caches and retrying...")
+                clear_model_cache()
+                
+                # Retry with force reload
+                try:
+                    model_a, metadata = _load_align()
+                    logger.info("✅ Alignment model loaded successfully after cache clear")
+                except Exception as retry_e:
+                    if "sha256" in str(retry_e).lower() or "checksum" in str(retry_e).lower():
+                        # Second retry with different approach
+                        logger.warning("Second alignment checksum failure, trying with fresh download...")
+                        import time
+                        time.sleep(2)  # Brief pause
+                        model_a, metadata = _load_align()
+                    else:
+                        raise retry_e
+            else:
+                raise e
+
         result = whisperx.align(result["segments"], model_a, metadata, audio, DEVICE, return_char_alignments=False)
         
         del model_a
@@ -258,18 +376,17 @@ def generate_subtitles(
             f.write("\n".join(srt))
         
         # ASS file
-        ass_header = """[Script Info]
+        ass_header = f"""[Script Info]
 Title: Universal Media Studio
 ScriptType: v4.00+
 PlayResX: 1920
 PlayResY: 1080
+WrapStyle: 0
+ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
         events = []
         for seg in result["segments"]:
@@ -293,22 +410,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def restore_video(
-    video_file: str,
-    target_res: str,
-    upscale_model: str,
-    tile_size: int,
-    face_weight: float,
-    enable_face: bool,
-    progress: gr.Progress = gr.Progress()
+    video_file,
+    target_res,
+    upscale_model,
+    tile_size,
+    face_weight,
+    enable_face,
+    *args,
+    progress=gr.Progress()
 ) -> Tuple[Optional[str], Optional[str]]:
     """Upscale video using Real-ESRGAN binary and optionally CodeFormer."""
     flush_vram()
     
+    video_file = get_path(video_file)
     if not video_file:
         return None, None
 
     # Disk space safety check
-    check_disk_space(10.0) # Video upscaling needs significant space
+    check_disk_space(50.0) # 10-minute 4K video extraction needs ~30-50GB for PNGs
     
     try:
         gr.Info("Starting video restoration...")
@@ -427,8 +546,12 @@ def restore_video(
             "-vf", vf
         ]
         
-        if HAS_NVENC:
-            cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"])
+        if HAS_AV1_NVENC:
+            # Ada architecture: AV1 is superior in quality/bitrate
+            cmd.extend(["-c:v", "av1_nvenc", "-preset", "p7", "-cq", "20"])
+        elif HAS_NVENC:
+            # Ampere/Turing: p7 for highest quality
+            cmd.extend(["-c:v", "h264_nvenc", "-preset", "p7", "-cq", "20"])
         else:
             cmd.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
         
@@ -456,11 +579,12 @@ def restore_video(
         flush_vram()
 
 
-def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = gr.Progress()) -> Optional[str]:
+def enhance_audio(audio_file, attenuation, *args, progress=gr.Progress()) -> Optional[str]:
     """Enhance audio using DeepFilterNet with configurable attenuation."""
     flush_vram()
     check_disk_space(0.5)
 
+    audio_file = get_path(audio_file)
     if not audio_file:
         raise gr.Error("Please upload an audio file.")
     
@@ -506,11 +630,12 @@ def enhance_audio(audio_file: str, attenuation: float, progress: gr.Progress = g
         flush_vram()
 
 
-def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progress()) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+def separate_stems(audio_file, model, *args, progress=gr.Progress()) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Separate audio stems using Demucs with model selection."""
     flush_vram()
     check_disk_space(2.0)
 
+    audio_file = get_path(audio_file)
     if not audio_file:
         raise gr.Error("Please upload an audio file.")
     
@@ -558,18 +683,20 @@ def separate_stems(audio_file: str, model: str, progress: gr.Progress = gr.Progr
         flush_vram()
 
 
-def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.Progress()) -> str:
+def burn_subtitles(video, subs, font_size, *args, progress=gr.Progress()) -> str:
     """Burn subtitles into video."""
     flush_vram()
     check_disk_space(2.0)
 
+    video = get_path(video)
+    subs = get_path(subs)
+    
     if not video:
         raise gr.Error("Please upload a video file.")
     if not subs:
         raise gr.Error("Please upload a subtitle file.")
     
-    # CRITICAL: gr.File returns object with .name attribute for path
-    sub_path = subs.name if hasattr(subs, 'name') else str(subs)
+    sub_path = subs
     
     if not Path(sub_path).exists():
         raise gr.Error(f"Subtitle file not found: {sub_path}")
@@ -585,7 +712,13 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
         # 1. Backslashes must be doubled
         # 2. Single quotes must be escaped as '\''
         # 3. Colons must be escaped if they are interpreted as separators
-        escaped_path = str(sub_path).replace("\\", "/").replace("'", "'\\''").replace(":", "\\:")
+        
+        # Use shlex.quote for the overall command list, 
+        # but the internal filter string needs specific FFmpeg escaping.
+        def ffmpeg_escape_path(path_str):
+            return path_str.replace("\\", "/").replace("'", "'\\''").replace(":", "\\:")
+
+        escaped_path = ffmpeg_escape_path(str(sub_path))
         
         # Use 'ass' filter for both .ass and .ssa files
         if sub_path.lower().endswith((".ass", ".ssa")):
@@ -595,7 +728,12 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
             vf = f"subtitles='{escaped_path}':force_style='FontSize={font_size}'"
         
         cmd = ["ffmpeg", "-y", "-i", video, "-vf", vf]
-        cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"] if HAS_NVENC else ["-c:v", "libx264", "-crf", "18"])
+        
+        if HAS_NVENC:
+            # Optimal settings for Ada/Ampere: p7 (highest quality), 10-bit if possible
+            cmd.extend(["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "20"])
+        else:
+            cmd.extend(["-c:v", "libx264", "-crf", "18"])
         cmd.extend(["-c:a", "copy", "-movflags", "+faststart", str(out)])
         
         subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=1200)
@@ -608,11 +746,12 @@ def burn_subtitles(video: str, subs, font_size: int, progress: gr.Progress = gr.
         flush_vram()
 
 
-def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, progress: gr.Progress = gr.Progress()) -> Optional[str]:
+def convert_video(video, fmt, vcodec, acodec, crf, *args, progress=gr.Progress()) -> Optional[str]:
     """Convert video format."""
     flush_vram()
     check_disk_space(2.0)
 
+    video = get_path(video)
     if not video:
         raise gr.Error("Please upload a video file.")
     
@@ -655,11 +794,12 @@ def convert_video(video: str, fmt: str, vcodec: str, acodec: str, crf: int, prog
         flush_vram()
 
 
-def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()) -> Optional[str]:
+def extract_audio(video, fmt, *args, progress=gr.Progress()) -> Optional[str]:
     """Extract audio from video."""
     flush_vram()
     check_disk_space(0.5)
 
+    video = get_path(video)
     if not video:
         raise gr.Error("Please upload a video file.")
     
@@ -695,21 +835,23 @@ def extract_audio(video: str, fmt: str, progress: gr.Progress = gr.Progress()) -
         flush_vram()
 
 
-def on_preset_change(preset: str) -> Tuple[int, str, float]:
+def on_preset_change(preset, *args) -> Tuple[int, str, float]:
     """Update UI components based on selected media preset."""
     batch, model, face_w = PRESETS.get(preset, PRESETS["Live Action"])
     return batch, model, face_w
 
 
 def process_audio(
-    audio: str,
-    denoise: bool,
-    strength: float,
-    separate: bool,
-    model: str,
-    progress: gr.Progress = gr.Progress()
+    audio,
+    denoise,
+    strength,
+    separate,
+    model,
+    *args,
+    progress=gr.Progress()
 ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Combined helper for audio enhancement and stem separation."""
+    audio = get_path(audio)
     if not audio:
         raise gr.Error("Please upload an audio file.")
     enhanced = None

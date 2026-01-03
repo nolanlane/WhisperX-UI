@@ -8,7 +8,7 @@ whisperx==3.1.5
 pyannote.audio==3.1.1
 
 # Gradio UI
-gradio==4.44.1
+gradio==5.0.0
 
 # Audio Processing
 demucs==4.0.1
@@ -19,6 +19,9 @@ pydub==0.25.1
 
 # Video Processing
 opencv-python-headless==4.9.0.80
+
+# Modern Restoration Library (Alternative to BasicSR)
+spandrel==0.3.0
 
 # CodeFormer dependencies
 basicsr==1.4.2
@@ -36,3 +39,8 @@ huggingface_hub[hf_transfer]==0.21.4
 
 # HF Transfer acceleration
 hf_transfer==0.1.5
+
+# Security Patch: Torch 2.5.1+ is recommended to mitigate CVE-2025-32434
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1

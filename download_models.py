@@ -49,6 +49,40 @@ os.environ["HF_HOME"] = str(HF_HOME)
 os.environ["TRANSFORMERS_CACHE"] = str(HF_HOME)
 os.environ["NLTK_DATA"] = str(NLTK_HOME)
 os.environ["TORCH_HOME"] = str(TORCH_HOME)
+
+
+def clear_all_model_caches():
+    """Clear all possible model cache directories to resolve checksum issues."""
+    cache_dirs = [
+        WHISPER_DIR,
+        MODELS_DIR / "whisper", 
+        MODELS_DIR / "alignment",
+        HF_HOME,
+        NLTK_HOME,
+        TORCH_HOME,
+        Path.home() / ".cache" / "whisper",
+        Path.home() / ".cache" / "huggingface", 
+        Path.home() / ".cache" / "whisperx",
+        Path.home() / ".cache" / "torch" / "hub"
+    ]
+    
+    logger.info("🧹 Clearing all model cache directories...")
+    for cache_dir in cache_dirs:
+        if cache_dir.exists():
+            logger.info(f"  Removing: {cache_dir}")
+            shutil.rmtree(cache_dir, ignore_errors=True)
+    
+    # Recreate essential directories
+    WHISPER_DIR.mkdir(parents=True, exist_ok=True)
+    (MODELS_DIR / "alignment").mkdir(parents=True, exist_ok=True)
+    HF_HOME.mkdir(parents=True, exist_ok=True)
+    NLTK_HOME.mkdir(parents=True, exist_ok=True)
+    TORCH_HOME.mkdir(parents=True, exist_ok=True)
+    
+    logger.info("✅ Cache clearing completed")
+
+
+# Ensure directories exist
 os.environ["FACEXLIB_HOME"] = str(MODELS_DIR / "facexlib")
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
@@ -61,29 +95,54 @@ Path(os.environ["FACEXLIB_HOME"]).mkdir(parents=True, exist_ok=True)
 
 
 def download_whisper_model():
-    """Download WhisperX large-v3 model."""
+    """Download WhisperX large-v3 model with retry logic for checksum errors."""
     logger.info("=" * 60)
     logger.info("📥 Downloading Whisper large-v3 model...")
     logger.info("=" * 60)
     
-    try:
+    def _load():
         import whisperx
-        import nltk
-        
-        # WhisperX uses nltk for sentence segmentation
-        logger.info(f"  Downloading NLTK data to {os.environ['NLTK_DATA']}...")
-        nltk.download('punkt', download_dir=os.environ["NLTK_DATA"])
-        nltk.download('punkt_tab', download_dir=os.environ["NLTK_DATA"])
-        
-        # Load model to trigger download (uses faster-whisper under the hood)
-        # CRITICAL: Use int8 on CPU, NOT float16 (float16 requires GPU)
-        model = whisperx.load_model(
+        return whisperx.load_model(
             "large-v3",
             device="cpu",
             compute_type="int8",
             download_root=str(WHISPER_DIR)
         )
-        del model
+
+    try:
+        import nltk
+        # WhisperX uses nltk for sentence segmentation
+        logger.info(f"  Downloading NLTK data to {os.environ['NLTK_DATA']}...")
+        nltk.download('punkt', download_dir=os.environ["NLTK_DATA"])
+        nltk.download('punkt_tab', download_dir=os.environ["NLTK_DATA"])
+        
+        try:
+            model = _load()
+            del model
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "sha256" in err_msg or "checksum" in err_msg:
+                logger.warning(f"Checksum mismatch for Whisper model. Clearing all caches and retrying...")
+                clear_all_model_caches()
+                
+                # First retry
+                try:
+                    model = _load()
+                    del model
+                    logger.info("✅ Whisper model loaded successfully after cache clear")
+                except Exception as retry_e:
+                    if "sha256" in str(retry_e).lower() or "checksum" in str(retry_e).lower():
+                        # Second retry with pause
+                        logger.warning("Second checksum failure, trying with fresh download...")
+                        import time
+                        time.sleep(3)  # Brief pause
+                        model = _load()
+                        del model
+                    else:
+                        raise retry_e
+            else:
+                raise e
+        
         logger.info("✅ Whisper large-v3 downloaded successfully!")
         
     except Exception as e:
@@ -120,7 +179,7 @@ def download_alignment_models():
 
 
 def download_vad_model():
-    """Download Silero VAD model used by WhisperX."""
+    """Download Silero VAD model used by WhisperX with checksum resilience."""
     logger.info("=" * 60)
     logger.info("📥 Downloading VAD model...")
     logger.info("=" * 60)
@@ -129,12 +188,44 @@ def download_vad_model():
         import torch
         
         # Silero VAD (standard)
-        torch.hub.load(
-            repo_or_dir='snakers4/silero-vad',
-            model='silero_vad',
-            force_reload=False,
-            onnx=False
-        )
+        try:
+            torch.hub.load(
+                repo_or_dir='snakers4/silero-vad',
+                model='silero_vad',
+                force_reload=False,
+                onnx=False
+            )
+        except Exception as e:
+            if "checksum" in str(e).lower():
+                logger.warning("VAD checksum mismatch. Clearing all caches and retrying with force_reload=True...")
+                clear_all_model_caches()
+                
+                # First retry with force reload
+                try:
+                    torch.hub.load(
+                        repo_or_dir='snakers4/silero-vad',
+                        model='silero_vad',
+                        force_reload=True,
+                        onnx=False
+                    )
+                    logger.info("✅ VAD model loaded successfully after cache clear")
+                except Exception as retry_e:
+                    if "checksum" in str(retry_e).lower():
+                        # Second retry with pause
+                        logger.warning("Second VAD checksum failure, trying with fresh download...")
+                        import time
+                        time.sleep(3)
+                        torch.hub.load(
+                            repo_or_dir='snakers4/silero-vad',
+                            model='silero_vad',
+                            force_reload=True,
+                            onnx=False
+                        )
+                    else:
+                        raise retry_e
+            else:
+                raise e
+                
         logger.info("✅ Silero VAD model downloaded!")
         
         # WhisperX specific VAD segmentation model
