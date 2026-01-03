@@ -5,7 +5,16 @@
 
 # WhisperX and dependencies
 whisperx==3.7.4
-pyannote.audio==3.1.1
+# Updated for WhisperX 3.7.4 compatibility (requires >=3.3.2)
+pyannote.audio==3.3.2
+# Additional WhisperX 3.7.4 dependencies
+ctranslate2>=4.5.0
+faster-whisper>=1.1.1
+nltk>=3.9.1
+# AV version constraint for Python 3.9 compatibility  
+av<16.0.0
+# Triton for x86_64 Linux only
+triton>=3.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'
 
 # Gradio UI
 gradio==5.0.0
@@ -30,17 +39,21 @@ lpips==0.1.4
 einops==0.7.0
 
 # Utilities
-numpy<2
+# Updated for WhisperX 3.7.4 compatibility (requires numpy>=2.0.2)
+numpy>=2.0.2,<2.1.0
 scipy==1.12.0
 Pillow==10.2.0
 tqdm==4.66.2
 requests==2.31.0
+# Updated for WhisperX 3.7.4 compatibility (requires >=4.48.0)
 huggingface_hub[hf_transfer]==0.21.4
+transformers>=4.48.0
 
 # HF Transfer acceleration
 hf_transfer==0.1.5
 
 # Security Patch: Torch 2.5.1+ is recommended to mitigate CVE-2025-32434
-torch==2.5.1
-torchvision==0.20.1
-torchaudio==2.5.1
+# Updated to match WhisperX 3.7.4 requirements (torchaudio>=2.8.0)
+torch==2.8.0
+torchvision==0.23.0
+torchaudio==2.8.0

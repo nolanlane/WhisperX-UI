@@ -83,7 +83,8 @@ source venv/bin/activate  # Linux/Mac
 # venv\Scripts\activate  # Windows
 
 # Install dependencies
-pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+# Updated to match WhisperX 3.7.4 requirements (torch~=2.8.0, torchaudio~=2.8.0)
+pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 
 # Run the app

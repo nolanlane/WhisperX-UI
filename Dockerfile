@@ -90,7 +90,8 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install PyTorch with CUDA 12.1 support (using uv for speed)
-RUN uv pip install --system torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 \
+# Updated to match WhisperX 3.7.4 requirements (torchaudio>=2.8.0)
+RUN uv pip install --system torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 \
     --index-url https://download.pytorch.org/whl/cu121
 
 # Install remaining Python dependencies
