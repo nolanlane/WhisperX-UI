@@ -234,22 +234,43 @@ def download_vad_model():
 
         # This URL is the target of the redirect from the hardcoded EU URL
         # We manually download it so whisperx doesn't try to use the broken URL
-        url = "https://whisperx.s3.us-west-2.amazonaws.com/model_weights/segmentation/0b5b3216d60a2d32fc086b47ea8c67589aaeb26b7e07fcbe620d6d0b83e209ea/pytorch_model.bin"
+        # Note: The original eu-west-2 URL is expired, using us-west-2 instead
+        # Fallback to GitHub hosted asset if S3 fails
+        primary_url = "https://whisperx.s3.us-west-2.amazonaws.com/model_weights/segmentation/0b5b3216d60a2d32fc086b47ea8c67589aaeb26b7e07fcbe620d6d0b83e209ea/pytorch_model.bin"
+        fallback_url = "https://github.com/m-bain/whisperX/raw/main/whisperx/assets/pytorch_model.bin"
 
         # Target location expected by WhisperX
         # It looks in torch.hub._get_torch_home() -> which maps to os.environ["TORCH_HOME"]
         target_path = TORCH_HOME / "whisperx-vad-segmentation.bin"
 
         if not target_path.exists():
-            # Use curl -L to handle any further redirects robustly
-            # We use a user-agent to avoid 403s on some S3 setups
-            subprocess.run([
-                "curl", "-L",
-                "-A", "Mozilla/5.0",
-                "-o", str(target_path),
-                url
-            ], check=True)
-            logger.info("  ✅ WhisperX VAD segmentation model downloaded!")
+            # Try primary URL first, then fallback
+            urls_to_try = [primary_url, fallback_url]
+            downloaded = False
+            
+            for i, url in enumerate(urls_to_try):
+                try:
+                    logger.info(f"  Trying URL {i+1}/{len(urls_to_try)}: {url}")
+                    # Use curl -L to handle any further redirects robustly
+                    # We use a user-agent to avoid 403s on some S3 setups
+                    result = subprocess.run([
+                        "curl", "-L",
+                        "--user-agent", "Mozilla/5.0 (compatible; WhisperX-UI/1.0)",
+                        "-o", str(target_path),
+                        url
+                    ], check=True, timeout=300)
+                    downloaded = True
+                    logger.info(f"  ✅ Downloaded successfully from URL {i+1}")
+                    break
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"  ⚠️ URL {i+1} failed: {e}")
+                    if target_path.exists():
+                        target_path.unlink()  # Remove partial download
+                    continue
+            
+            if not downloaded:
+                logger.error("  ❌ All URLs failed for VAD segmentation model")
+                raise RuntimeError("Failed to download VAD segmentation model from all sources")
         else:
             logger.info("  ✓ WhisperX VAD segmentation model already exists")
 

@@ -83,7 +83,7 @@ source venv/bin/activate  # Linux/Mac
 # venv\Scripts\activate  # Windows
 
 # Install dependencies
-pip install torch==2.1.2 torchaudio==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 
 # Run the app
