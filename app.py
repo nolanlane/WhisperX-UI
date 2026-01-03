@@ -7,7 +7,6 @@ Clean, dashboard-style interface for AI-powered media processing.
 import gc
 import os
 import sys
-import json
 import shutil
 import logging
 import subprocess
@@ -41,8 +40,6 @@ MODELS_DIR = STORAGE_DIR / "models"
 WHISPER_DIR = MODELS_DIR / "whisper"
 OUTPUT_DIR = STORAGE_DIR / "outputs"
 TEMP_DIR = STORAGE_DIR / "temp"
-CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
-REALESRGAN_BIN = STORAGE_DIR / "bin" / "realesrgan-ncnn-vulkan"
 BIN_DIR = STORAGE_DIR / "bin"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -53,7 +50,6 @@ os.environ["PYTHONPATH"] = f"{BASE_DIR}:{os.environ.get('PYTHONPATH', '')}"
 os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
 os.environ["NLTK_DATA"] = str(MODELS_DIR / "nltk")
 os.environ["TORCH_HOME"] = str(MODELS_DIR / "torch")
-os.environ["FACEXLIB_HOME"] = str(MODELS_DIR / "facexlib")
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 # Ensure Gradio uses the persistent temp directory
 os.environ["GRADIO_TEMP_DIR"] = str(TEMP_DIR)
@@ -187,13 +183,13 @@ def safe_move(src: Path, dst: Path):
 
 
 # =============================================================================
-# Media Presets - Returns (batch_size, upscale_model, face_weight)
+# Media Presets - Returns (batch_size,)
 # =============================================================================
 
 PRESETS = {
-    "Anime": (16, "realesrgan-x4plus-anime", 0.3),
-    "Live Action": (16, "realesrgan-x4plus", 0.7),
-    "Podcast": (24, "realesrgan-x4plus", 0.5),
+    "Standard": (16,),
+    "High Accuracy": (8,),
+    "Fast": (32,),
 }
 
 
@@ -406,285 +402,6 @@ Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100
         flush_vram()
 
 
-def restore_video(
-    video_file,
-    target_res,
-    upscale_model,
-    tile_size,
-    face_weight,
-    enable_face,
-    *args,
-    progress=gr.Progress()
-) -> Tuple[Optional[str], Optional[str]]:
-    """Upscale video using Real-ESRGAN binary and optionally CodeFormer."""
-    flush_vram()
-    
-    video_file = get_path(video_file)
-    if not video_file:
-        return None, None
-
-    # Disk space safety check
-    check_disk_space(50.0) # 10-minute 4K video extraction needs ~30-50GB for PNGs
-    
-    try:
-        gr.Info("Starting video restoration...")
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        name = Path(video_file).stem
-        
-        frames_dir = TEMP_DIR / f"frames_{ts}"
-        upscaled_dir = TEMP_DIR / f"upscaled_{ts}"
-        restored_dir = TEMP_DIR / f"restored_{ts}"
-        
-        for d in [frames_dir, upscaled_dir, restored_dir]:
-            d.mkdir(exist_ok=True)
-        
-        progress(0.1, desc="Extracting frames...")
-        
-        # Get FPS
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=r_frame_rate,width,height", "-of", "json", video_file],
-            capture_output=True, text=True, timeout=30
-        )
-        if probe.returncode != 0:
-            raise gr.Error(f"Failed to analyze video: {probe.stderr}")
-        info = json.loads(probe.stdout)
-        stream_info = info["streams"][0]
-        fps_parts = stream_info["r_frame_rate"].split("/")
-        fps = float(fps_parts[0]) / float(fps_parts[1])
-        input_height = int(stream_info.get("height", 480))
-        
-        # Extract frames (use %08d for long videos)
-        extract_result = subprocess.run(
-            ["ffmpeg", "-y", "-i", video_file, "-qscale:v", "1", str(frames_dir / "frame_%08d.png")],
-            capture_output=True, text=True, timeout=1200
-        )
-        if extract_result.returncode != 0:
-            raise gr.Error(f"Frame extraction failed: {extract_result.stderr}")
-        
-        progress(0.3, desc="Upscaling with Real-ESRGAN...")
-        
-        # Calculate scale based on input resolution
-        target_height = 2160 if target_res == "4K" else 1080
-        scale = max(2, min(4, (target_height // input_height) or 2))
-        
-        if REALESRGAN_BIN.exists():
-            esrgan_result = subprocess.run([
-                str(REALESRGAN_BIN),
-                "-i", str(frames_dir),
-                "-o", str(upscaled_dir),
-                "-s", str(scale),
-                "-t", str(tile_size),
-                "-n", upscale_model,
-                "-f", "png"
-            ], capture_output=True, text=True, cwd=str(BIN_DIR), timeout=3600)
-            if esrgan_result.returncode != 0:
-                raise gr.Error(f"Real-ESRGAN failed: {esrgan_result.stderr}")
-        else:
-            raise gr.Error(f"Real-ESRGAN binary not found at {REALESRGAN_BIN}")
-        
-        final_dir = upscaled_dir
-        
-        # CodeFormer face restoration
-        if enable_face:
-            cf_script = CODEFORMER_DIR / "inference_codeformer.py"
-            if not cf_script.exists():
-                raise gr.Error(
-                    "Face restoration is enabled, but CodeFormer is not available in this environment. "
-                    "If you're running in Docker/RunPod, restart the pod so start.py can fetch CodeFormer."
-                )
-
-            # Use the isolated CodeFormer virtual environment to avoid NumPy conflicts
-            cf_python = "/opt/venv/codeformer/bin/python"
-            if not os.path.exists(cf_python):
-                cf_python = sys.executable # Fallback for local dev
-
-            progress(0.6, desc="Restoring faces with CodeFormer...")
-            try:
-                subprocess.run([
-                    cf_python, str(cf_script),
-                    "-w", str(face_weight),
-                    "--input_path", str(upscaled_dir),
-                    "--output_path", str(restored_dir),
-                    "--bg_upsampler", "None"
-                ], capture_output=True, text=True, check=True, cwd=str(CODEFORMER_DIR), timeout=3600)
-
-                # CodeFormer creates a 'final_results' subfolder inside the output path
-                # BUT if we specify --output_path, it might put files directly or in a subfolder
-                # depending on the input type. For directory input, it usually does:
-                # {output_path}/final_results/*.png
-                cf_out = restored_dir / "final_results"
-                if cf_out.exists() and any(cf_out.iterdir()):
-                    final_dir = cf_out
-                elif restored_dir.exists() and any(restored_dir.iterdir()):
-                    # Fallback if it puts them directly in restored_dir
-                    final_dir = restored_dir
-                else:
-                    raise gr.Error("CodeFormer completed but produced no output frames.")
-            except subprocess.CalledProcessError as e:
-                raise gr.Error(
-                    "CodeFormer failed. "
-                    f"stdout: {e.stdout}\n"
-                    f"stderr: {e.stderr}"
-                )
-        
-        progress(0.8, desc="Encoding video...")
-        
-        res = "3840:2160" if target_res == "4K" else "1920:1080"
-        output_path = OUTPUT_DIR / f"{name}_restored_{ts}.mp4"
-        
-        # Verify upscaled frames exist
-        upscaled_frames = sorted(upscaled_dir.glob("*.png"))
-        if not upscaled_frames:
-            raise gr.Error("Upscaling produced no output frames.")
-        
-        # Professional scaling: keep aspect ratio, pad with black, and ensure YUV420P
-        vf = f"scale={res}:force_original_aspect_ratio=decrease,pad={res}:(ow-iw)/2:(oh-ih)/2,format=yuv420p"
-        
-        cmd = [
-            "ffmpeg", "-y", "-framerate", str(fps),
-            "-i", str(final_dir / "frame_%08d.png"),
-            "-i", video_file, "-map", "0:v:0", "-map", "1:a:0?",
-            "-vf", vf
-        ]
-        
-        if HAS_AV1_NVENC:
-            # Ada architecture: AV1 is superior in quality/bitrate
-            cmd.extend(["-c:v", "av1_nvenc", "-preset", "p7", "-cq", "20"])
-        elif HAS_NVENC:
-            # Ampere/Turing: p7 for highest quality
-            cmd.extend(["-c:v", "h264_nvenc", "-preset", "p7", "-cq", "20"])
-        else:
-            cmd.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
-        
-        cmd.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path)])
-        
-        encode_result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
-        if encode_result.returncode != 0:
-            raise gr.Error(f"Video encoding failed: {encode_result.stderr}")
-        
-        # Cleanup
-        for d in [frames_dir, upscaled_dir, restored_dir]:
-            shutil.rmtree(d, ignore_errors=True)
-        
-        progress(1.0, desc="Complete!")
-        return str(output_path), str(output_path)
-        
-    except gr.Error:
-        raise
-    except Exception as e:
-        raise gr.Error(f"Restoration failed: {str(e)}")
-    finally:
-        # Always clean up temp files
-        for d in [frames_dir, upscaled_dir, restored_dir]:
-            shutil.rmtree(d, ignore_errors=True)
-        flush_vram()
-
-
-def enhance_audio(audio_file, attenuation, *args, progress=gr.Progress()) -> Optional[str]:
-    """Enhance audio using DeepFilterNet with configurable attenuation."""
-    flush_vram()
-    check_disk_space(0.5)
-
-    audio_file = get_path(audio_file)
-    if not audio_file:
-        raise gr.Error("Please upload an audio file.")
-    
-    if not Path(audio_file).exists():
-        raise gr.Error(f"Audio file not found: {audio_file}")
-    
-    out_dir = None
-    try:
-        gr.Info("Enhancing audio...")
-        progress(0.2, desc="Running DeepFilterNet...")
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = OUTPUT_DIR / f"enhanced_{ts}"
-        out_dir.mkdir(exist_ok=True)
-        
-        # Check if df-enhance is available
-        if shutil.which("df-enhance") is None:
-            raise gr.Error("DeepFilterNet (df-enhance) is not installed or not in PATH.")
-
-        # DeepFilterNet CLI with post-filter for stronger attenuation
-        cmd = ["df-enhance", "--output-dir", str(out_dir)]
-        if DEVICE == "cuda":
-            cmd.extend(["--device", "0"]) # Explicitly target first GPU
-        
-        if attenuation > 0.7:
-            cmd.append("--pf")  # Post-filter for aggressive noise reduction
-        cmd.append(audio_file)
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if result.returncode != 0:
-            raise gr.Error(f"DeepFilterNet failed: {result.stderr}")
-        
-        files = list(out_dir.glob("*.wav"))
-        if not files:
-            raise gr.Error("DeepFilterNet produced no output.")
-        
-        progress(1.0, desc="Complete!")
-        return str(files[0])
-    except gr.Error:
-        raise
-    except Exception as e:
-        raise gr.Error(f"Audio enhancement failed: {str(e)}")
-    finally:
-        flush_vram()
-
-
-def separate_stems(audio_file, model, *args, progress=gr.Progress()) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
-    """Separate audio stems using Demucs with model selection."""
-    flush_vram()
-    check_disk_space(2.0)
-
-    audio_file = get_path(audio_file)
-    if not audio_file:
-        raise gr.Error("Please upload an audio file.")
-    
-    if not Path(audio_file).exists():
-        raise gr.Error(f"Audio file not found: {audio_file}")
-    
-    try:
-        gr.Info(f"Separating stems with {model}...")
-        progress(0.1, desc=f"Running Demucs ({model})...")
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_dir = OUTPUT_DIR / f"stems_{ts}"
-        
-        # Check if Demucs is available
-        demucs_bin = shutil.which("demucs")
-        if demucs_bin is None:
-            raise gr.Error("Demucs is not installed or not in PATH.")
-
-        cmd = [
-            demucs_bin,
-            "--out", str(out_dir), "-n", model, audio_file
-        ]
-        if DEVICE == "cuda":
-            cmd.extend(["-d", "cuda"])
-            
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=1200)
-        
-        name = Path(audio_file).stem
-        stems_dir = out_dir / model / name
-        
-        if not stems_dir.exists():
-            raise gr.Error(f"Demucs output not found at {stems_dir}")
-        
-        progress(1.0, desc="Complete!")
-        
-        def get_stem(s: str) -> Optional[str]:
-            p = stems_dir / f"{s}.wav"
-            return str(p) if p.exists() else None
-        
-        return get_stem("vocals"), get_stem("drums"), get_stem("bass"), get_stem("other")
-    except gr.Error:
-        raise
-    except Exception as e:
-        raise gr.Error(f"Stem separation failed: {str(e)}")
-    finally:
-        flush_vram()
-
-
 def burn_subtitles(video, subs, font_size, *args, progress=gr.Progress()) -> str:
     """Burn subtitles into video."""
     flush_vram()
@@ -837,39 +554,6 @@ def extract_audio(video, fmt, *args, progress=gr.Progress()) -> Optional[str]:
         flush_vram()
 
 
-def on_preset_change(preset, *args) -> Tuple[int, str, float]:
-    """Update UI components based on selected media preset."""
-    batch, model, face_w = PRESETS.get(preset, PRESETS["Live Action"])
-    return batch, model, face_w
-
-
-def process_audio(
-    audio,
-    denoise,
-    strength,
-    separate,
-    model,
-    *args,
-    progress=gr.Progress()
-) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
-    """Combined helper for audio enhancement and stem separation."""
-    audio = get_path(audio)
-    if not audio:
-        raise gr.Error("Please upload an audio file.")
-    enhanced = None
-    v, d, b, o = None, None, None, None
-    try:
-        if denoise:
-            enhanced = enhance_audio(audio, strength, progress)
-        if separate:
-            v, d, b, o = separate_stems(audio, model, progress)
-    except gr.Error:
-        raise
-    except Exception as e:
-        raise gr.Error(f"Audio processing failed: {str(e)}")
-    return enhanced, v, d, b, o
-
-
 # =============================================================================
 # Gradio UI - Clean Dashboard Layout
 # =============================================================================
@@ -1000,62 +684,12 @@ def create_ui():
                             sub_ass = gr.File(label="📄 ASS File", file_count="single")
 
             # =====================================================================
-            # Tab 2: Visual Restoration
-            # =====================================================================
-            with gr.Tab("✨ Visual Restoration", id="restoration"):
-                gr.Markdown(
-                    "### Upscale and Restore Low-Quality Video\n"
-                    "*Powered by Real-ESRGAN (Upscaling) and CodeFormer (Face Restoration)*"
-                )
-
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        vid_input = gr.Video(label="📁 Upload Video", sources=["upload"])
-
-                        with gr.Row():
-                            vid_res = gr.Radio(
-                                choices=["1080p", "4K"],
-                                value="4K",
-                                label="Target Resolution"
-                            )
-
-                        with gr.Accordion("⚙️ Tweak Upscaler", open=False):
-                            vid_model = gr.Dropdown(
-                                choices=["realesrgan-x4plus", "realesrgan-x4plus-anime", "realesr-animevideov3"],
-                                value="realesrgan-x4plus",
-                                label="Upscaling Model"
-                            )
-                            vid_tile = gr.Slider(
-                                0, 512, value=0, step=32,
-                                label="Tile Size",
-                                info="0 = Auto. Increase if running out of VRAM (try 256 or 128)."
-                            )
-                            gr.Markdown("---")
-                            vid_face_enable = gr.Checkbox(
-                                label="🧑 Face Restoration",
-                                value=False,
-                                info="Enhance faces with CodeFormer (Slow!)"
-                            )
-                            vid_face_w = gr.Slider(
-                                0.0, 1.0, value=0.7, step=0.1,
-                                label="Face Weight",
-                                info="Higher = more restoration, Lower = more original fidelity"
-                            )
-
-                        vid_btn = gr.Button("✨ Restore Video", variant="primary", size="lg", elem_classes=["primary-btn"])
-
-                    with gr.Column(scale=1, elem_classes=["output-panel"]):
-                        gr.Markdown("#### 📤 Output")
-                        vid_preview = gr.Video(label="Result Preview", interactive=False)
-                        vid_download = gr.File(label="💾 Download File", file_count="single")
-
-            # =====================================================================
-            # Tab 3: Toolbox
+            # Tab 2: Toolbox
             # =====================================================================
             with gr.Tab("🛠️ Toolbox", id="toolbox"):
                 with gr.Tabs():
 
-                    # Tab 3.1: Burn Subtitles
+                    # Tab 2.1: Burn Subtitles
                     with gr.Tab("🔥 Burn Subtitles"):
                         gr.Markdown("### Hardcode subtitles into video permanently")
                         with gr.Row():
@@ -1083,7 +717,7 @@ def create_ui():
                             with gr.Column(elem_classes=["output-panel"]):
                                 conv_out = gr.Video(label="Converted Video")
 
-                    # Tab 3.3: Extract Audio
+                    # Tab 2.3: Extract Audio
                     with gr.Tab("🎵 Extract Audio"):
                         gr.Markdown("### Extract audio track from video")
                         with gr.Row():
@@ -1094,38 +728,7 @@ def create_ui():
                             with gr.Column(elem_classes=["output-panel"]):
                                 ext_out = gr.Audio(label="Extracted Audio", type="filepath")
 
-                    # Tab 3.4: Audio Tools
-                    with gr.Tab("🎛️ Audio Tools"):
-                        gr.Markdown("### Enhance and separate audio")
-                        with gr.Row():
-                            with gr.Column():
-                                at_in = gr.Audio(label="Input Audio", type="filepath", sources=["upload", "microphone"])
-
-                                with gr.Group():
-                                    gr.Markdown("#### 🧹 Denoise")
-                                    at_denoise = gr.Checkbox(label="Enable DeepFilterNet", value=True)
-                                    at_strength = gr.Slider(0.0, 1.0, value=1.0, label="Attenuation Strength")
-
-                                with gr.Group():
-                                    gr.Markdown("#### 🎸 Stem Separation")
-                                    at_separate = gr.Checkbox(label="Enable Demucs", value=False)
-                                    at_model = gr.Dropdown(
-                                        ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra"],
-                                        value="htdemucs",
-                                        label="Demucs Model"
-                                    )
-
-                                at_btn = gr.Button("🚀 Process Audio", variant="primary")
-
-                            with gr.Column(elem_classes=["output-panel"]):
-                                at_enhanced = gr.Audio(label="✨ Enhanced Audio", type="filepath")
-                                with gr.Accordion("🎸 Separated Stems", open=True):
-                                    at_vocals = gr.Audio(label="Vocals", type="filepath")
-                                    at_drums = gr.Audio(label="Drums", type="filepath")
-                                    at_bass = gr.Audio(label="Bass", type="filepath")
-                                    at_other = gr.Audio(label="Other", type="filepath")
-
-                    # Tab 3.5: System Maintenance
+                    # Tab 2.4: System Maintenance
                     with gr.Tab("⚙️ System"):
                         gr.Markdown("### System Maintenance")
                         with gr.Row():
@@ -1170,35 +773,24 @@ def create_ui():
                     outputs=[sub_transcript, sub_srt, sub_ass]
                 )
                 
-                vid_btn.click(
-                    fn=restore_video,
-                    inputs=[vid_input, vid_res, vid_model, vid_tile, vid_face_w, vid_face_enable],
-                    outputs=[vid_preview, vid_download]
-                )
-                
                 # Preset connection
                 preset_dropdown.change(
                     fn=on_preset_change,
                     inputs=[preset_dropdown],
-                    outputs=[sub_batch, vid_model, vid_face_w]
+                    outputs=[sub_batch]
                 )
                 
                 # Toolbox tools
                 burn_btn.click(burn_subtitles, [burn_vid, burn_sub, burn_font], burn_out)
                 conv_btn.click(convert_video, [conv_in, conv_fmt, conv_vc, conv_ac, conv_crf], conv_out)
                 ext_btn.click(extract_audio, [ext_in, ext_fmt], ext_out)
-                at_btn.click(
-                    process_audio,
-                    [at_in, at_denoise, at_strength, at_separate, at_model],
-                    [at_enhanced, at_vocals, at_drums, at_bass, at_other]
-                )
         
         # Footer
         gr.Markdown(
             "---\n"
             "<center>"
             "<small>🎬 <b>Universal Media Studio</b> | "
-            "WhisperX • Real-ESRGAN • CodeFormer • DeepFilterNet • Demucs</small>\n"
+            "WhisperX • FFmpeg Toolbox</small>\n"
             "<small style='color: #64748b;'>Built for RunPod GPU Instances</small>"
             "</center>"
         )

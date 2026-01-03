@@ -31,8 +31,6 @@ WHISPER_DIR = MODELS_DIR / "whisper"
 HF_HOME = MODELS_DIR / "huggingface"
 NLTK_HOME = MODELS_DIR / "nltk"
 TORCH_HOME = MODELS_DIR / "torch"
-CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
-BIN_DIR = STORAGE_DIR / "bin"
 
 # Set HuggingFace, NLTK, and Torch cache locations
 os.environ["HF_HOME"] = str(HF_HOME)
@@ -80,7 +78,6 @@ def clear_all_model_caches():
 
 
 # Ensure directories exist
-os.environ["FACEXLIB_HOME"] = str(MODELS_DIR / "facexlib")
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 # Ensure directories exist
@@ -88,7 +85,6 @@ WHISPER_DIR.mkdir(parents=True, exist_ok=True)
 HF_HOME.mkdir(parents=True, exist_ok=True)
 NLTK_HOME.mkdir(parents=True, exist_ok=True)
 TORCH_HOME.mkdir(parents=True, exist_ok=True)
-Path(os.environ["FACEXLIB_HOME"]).mkdir(parents=True, exist_ok=True)
 
 
 def download_whisper_model():
@@ -275,114 +271,6 @@ def download_vad_model():
         logger.error(f"⚠️ VAD model download error: {e}")
 
 
-def download_codeformer_models():
-    """Download CodeFormer pretrained models."""
-    logger.info("=" * 60)
-    logger.info("📥 Downloading CodeFormer models...")
-    logger.info("=" * 60)
-    
-    if not CODEFORMER_DIR.exists():
-        logger.warning("⚠️ CodeFormer directory not found, skipping...")
-        return
-    
-    try:
-        cf_python = "/opt/venv/codeformer/bin/python"
-        if not os.path.exists(cf_python):
-            cf_python = sys.executable
-
-        # Run CodeFormer's download script
-        download_script = CODEFORMER_DIR / "scripts" / "download_pretrained_models.py"
-        
-        if download_script.exists():
-            subprocess.run(
-                [cf_python, str(download_script), "facelib"],
-                cwd=str(CODEFORMER_DIR),
-                check=True
-            )
-            subprocess.run(
-                [cf_python, str(download_script), "CodeFormer"],
-                cwd=str(CODEFORMER_DIR),
-                check=True
-            )
-            logger.info("✅ CodeFormer models downloaded!")
-        else:
-            logger.warning("⚠️ CodeFormer download script not found")
-            
-    except Exception as e:
-        logger.error(f"⚠️ CodeFormer download error: {e}")
-
-
-def download_demucs_models():
-    """Pre-download Demucs models offered in the UI."""
-    logger.info("=" * 60)
-    logger.info("📥 Downloading Demucs models...")
-    logger.info("=" * 60)
-    
-    try:
-        demucs_bin = "/app/bin/demucs"
-        if not os.path.exists(demucs_bin):
-            demucs_bin = "/opt/venv/demucs/bin/demucs"
-
-        # Models offered in app.py UI
-        models = ["htdemucs", "htdemucs_ft", "htdemucs_6s", "mdx_extra"]
-        for model_name in models:
-            logger.info(f"  Downloading: {model_name}...")
-            # Run demucs with a dummy tiny file or just --help to trigger model download
-            # Actually, demucs doesn't have a simple 'download-only' flag, 
-            # but we can call the internal downloader via the venv's python
-            venv_python = "/opt/venv/demucs/bin/python"
-            subprocess.run([
-                venv_python, "-c", 
-                f"from demucs.pretrained import get_model; get_model('{model_name}')"
-            ], check=True)
-            logger.info(f"  ✅ {model_name} ready")
-            
-    except Exception as e:
-        logger.error(f"⚠️ Demucs download error: {e}")
-
-
-def download_deepfilternet_models():
-    """Pre-download DeepFilterNet models."""
-    logger.info("=" * 60)
-    logger.info("📥 Downloading DeepFilterNet models...")
-    logger.info("=" * 60)
-    
-    try:
-        venv_python = "/opt/venv/deepfilternet/bin/python"
-        subprocess.run([
-            venv_python, "-c",
-            "from df.enhance import init_df; init_df()"
-        ], check=True)
-        logger.info("✅ DeepFilterNet models downloaded!")
-        
-    except Exception as e:
-        logger.error(f"⚠️ DeepFilterNet download error: {e}")
-
-
-def verify_realesrgan_binary():
-    """Verify realesrgan-ncnn-vulkan binary is ready."""
-    logger.info("=" * 60)
-    logger.info("🔍 Verifying Real-ESRGAN binary...")
-    logger.info("=" * 60)
-    
-    binary_path = BIN_DIR / "realesrgan-ncnn-vulkan"
-    
-    if binary_path.exists():
-        # Make executable
-        os.chmod(binary_path, 0o755)
-        logger.info(f"✅ Real-ESRGAN binary found at: {binary_path}")
-        
-        # Verify models exist
-        models_dir = BIN_DIR / "models"
-        if models_dir.exists():
-            models = list(models_dir.glob("*.bin"))
-            logger.info(f"  Found {len(models)} model files")
-        else:
-            logger.warning("  ⚠️ Models directory not found")
-    else:
-        logger.warning(f"⚠️ Real-ESRGAN binary not found at: {binary_path}")
-
-
 def main():
     """Main download orchestrator."""
     logger.info("=" * 60)
@@ -395,10 +283,6 @@ def main():
     download_whisper_model()
     download_alignment_models()
     download_vad_model()
-    download_demucs_models()
-    download_deepfilternet_models()
-    download_codeformer_models()
-    verify_realesrgan_binary()
     
     logger.info("=" * 60)
     logger.info("✅ Model download complete!")

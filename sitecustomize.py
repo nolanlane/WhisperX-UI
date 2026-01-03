@@ -8,18 +8,10 @@ print("[UMS] Loading sitecustomize.py - Applying global patches...")
 warnings.filterwarnings("ignore", category=UserWarning, module="pyannote")
 warnings.filterwarnings("ignore", message=".*torchaudio._backend.set_audio_backend.*")
 
-# 2. FIX: Global monkey patch for BasicSR compatibility with torchvision >= 0.16
-try:
-    import torchvision.transforms.functional as F
-    sys.modules['torchvision.transforms.functional_tensor'] = F
-    os.environ["BASICSR_PATCHED"] = "1"
-except (ImportError, Exception):
-    pass
-
-# 3. FIX: NumPy compatibility patch for legacy libraries
+# 2. FIX: NumPy compatibility patch for legacy libraries
 try:
     import numpy as np
-    # Many older libraries (BasicSR, GFPGAN) use these removed aliases
+    # Some older dependencies might still use these removed aliases in NumPy 2.0
     if not hasattr(np, 'float'):
         np.float = float
     if not hasattr(np, 'int'):

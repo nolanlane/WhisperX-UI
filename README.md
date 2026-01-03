@@ -1,6 +1,6 @@
-# 🎬 Universal Media Studio
+# 🎬 Universal Media Studio (Lite)
 
-A production-ready, AI-powered media processing application designed for RunPod deployment. Features a polished Gradio dashboard interface with robust backend handling for heavy AI models.
+A production-ready, AI-powered media processing application optimized for subtitle generation and media conversion. Designed for RunPod deployment with a minimal disk footprint.
 
 ## Features
 
@@ -10,17 +10,6 @@ A production-ready, AI-powered media processing application designed for RunPod 
 - **Speaker diarization** (optional, requires HuggingFace token)
 - **Export to SRT/ASS** formats
 - Progress tracking with loading bar
-
-### 🖼️ Visual Restoration
-- **Video upscaling** to 1080p or 4K using Real-ESRGAN (ncnn-vulkan binary)
-- **Face restoration** with CodeFormer
-- **NVENC hardware encoding** when available
-- Frame-by-frame processing with cleanup
-
-### 🎧 Audio Tools
-- **Noise reduction** with DeepFilterNet
-- **Stem separation** with Demucs (vocals, drums, bass, other,etc)
-- Memory-isolated subprocess execution
 
 ### 🛠️ FFmpeg Toolbox
 - **Burn subtitles** into video
@@ -33,10 +22,6 @@ A production-ready, AI-powered media processing application designed for RunPod 
 | Component | Implementation | Notes |
 |-----------|---------------|-------|
 | WhisperX | Python library | float16 (GPU) / int8 (CPU) |
-| Demucs | subprocess | Memory isolation + GPU targeting |
-| Real-ESRGAN | ncnn-vulkan binary | Vulkan hardware acceleration |
-| CodeFormer | subprocess | Face restoration with fidelity control |
-| DeepFilterNet | CLI (df-enhance) | Aggressive noise reduction (GPU) |
 | FFmpeg | subprocess | Hardened path escaping & NVENC support |
 
 ## Technical Architecture
@@ -44,15 +29,14 @@ A production-ready, AI-powered media processing application designed for RunPod 
 The application follows a **"Guardian Process"** pattern for maximum stability in containerized environments:
 
 ### Lifecycle Workflow
-1.  **Orchestration (`start.py`)**: Bootstraps the environment, acquires runtime binaries (Real-ESRGAN/CodeFormer), and validates hardware acceleration (CUDA/Vulkan/NVENC).
+1.  **Orchestration (`start.py`)**: Bootstraps the environment and validates hardware acceleration (CUDA/NVENC).
 2.  **Model Management (`download_models.py`)**: Ensures all AI weights are stored in the persistent storage volume (`/workspace/models` on RunPod).
-3.  **Core Logic (`app.py`)**: A Gradio-based engine that orchestrates heavy media pipelines with aggressive VRAM management and process isolation.
-4.  **Compatibility (`sitecustomize.py`)**: Injected via `PYTHONPATH` to apply global monkey patches (e.g., BasicSR/Torchvision fixes) across all child processes.
+3.  **Core Logic (`app.py`)**: A Gradio-based engine that orchestrates transcription and conversion pipelines.
+4.  **Compatibility (`sitecustomize.py`)**: Injected via `PYTHONPATH` to apply global patches.
 
 ### Data Pipelines
 -   **ASR**: `Audio -> WhisperX -> Alignment -> Diarization -> Export`
--   **Restoration**: `Video -> Frames (FFmpeg) -> NCNN (Binary) -> CodeFormer (PyTorch) -> Stitch (FFmpeg)`
--   **Audio Tools**: `Audio -> DeepFilterNet/Demucs -> Memory-Isolated Processing`
+-   **Media Tools**: `Video/Audio -> FFmpeg -> Conversion/Extraction/Burning`
 
 ## Persistence & Performance
 
@@ -65,7 +49,7 @@ This application is optimized for **RunPod** and other containerized environment
     - **Outputs**: `/workspace/outputs`
     - **Temp**: `/workspace/temp`
 - **VRAM Optimization**: Aggressive memory flushing between AI stages ensures stability on 8GB+ GPUs.
-- **Hardware Acceleration**: Automatically detects and utilizes **CUDA** (Torch), **Vulkan** (Real-ESRGAN), and **NVENC** (FFmpeg).
+- **Hardware Acceleration**: Automatically detects and utilizes **CUDA** (Torch) and **NVENC** (FFmpeg).
 - **Auto-Cleanup**: Startup routine cleans up temporary files and outputs older than 24 hours to prevent disk exhaustion.
 
 ## Installation
@@ -83,7 +67,6 @@ source venv/bin/activate  # Linux/Mac
 # venv\Scripts\activate  # Windows
 
 # Install dependencies
-# Updated to match WhisperX 3.7.4 requirements (torch~=2.8.0, torchaudio~=2.8.0)
 pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 
@@ -98,7 +81,6 @@ python app.py
 docker build -t whisperx-ui .
 
 # Run the container
-# Note: in the slim image configuration, models will download on first run.
 docker run --gpus all -p 7860:7860 whisperx-ui
 ```
 
@@ -140,17 +122,16 @@ Notes:
 
 The app includes intelligent presets that auto-configure settings:
 
-| Preset | Best For | Upscale Model | Face Weight |
-|--------|----------|---------------|-------------|
-| Anime | Animation, cartoons | realesrgan-x4plus-anime | 0.3 |
-| Live Action | Movies, TV shows | realesrgan-x4plus | 0.7 |
-| Podcast | Audio-focused content | realesrgan-x4plus | 0.5 |
+| Preset | Best For | Batch Size |
+|--------|----------|------------|
+| Standard | Default usage | 16 |
+| High Accuracy | Precise timestamps | 8 |
+| Fast | Quick results | 32 |
 
 ### Environment Variables
 
 ```bash
 HF_HUB_ENABLE_HF_TRANSFER=1  # Faster model downloads
-# Note: HF_HOME, NLTK_DATA, etc. are automatically handled and redirected to /workspace if available.
 ```
 
 ## Project Structure
@@ -175,10 +156,6 @@ WhisperX-UI/
 - App launches with `.queue()` enabled
 - Prevents timeouts on long video renders
 - Configurable concurrency limits
-
-### Memory Isolation
-- Demucs runs via subprocess to keep memory separate
-- Real-ESRGAN uses pre-compiled binary (no Python VRAM overhead)
 
 ## UI Design
 
@@ -207,7 +184,6 @@ The interface follows UX best practices:
 ### Out of Memory
 - Reduce batch size in Advanced Settings
 - Use smaller Whisper model (medium instead of large-v3)
-- Reduce tile size for video upscaling
 
 ### Slow Processing
 - Ensure GPU is being utilized (check `nvidia-smi`)
@@ -228,8 +204,4 @@ MIT License - See LICENSE file for details.
 ## Acknowledgments
 
 - [WhisperX](https://github.com/m-bain/whisperX) - Accurate speech recognition
-- [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) - Image/video upscaling
-- [CodeFormer](https://github.com/sczhou/CodeFormer) - Face restoration
-- [Demucs](https://github.com/facebookresearch/demucs) - Audio source separation
-- [DeepFilterNet](https://github.com/Rikorose/DeepFilterNet) - Noise suppression
 - [Gradio](https://gradio.app/) - Web interface framework

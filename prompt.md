@@ -68,12 +68,9 @@ REQUIRED_BINARIES = [
 ]
 
 OPTIONAL_BINARIES = [
-    ("df-enhance", ["df-enhance", "--help"]),
 ]
 
 REQUIRED_PATHS = [
-    Path("/app/bin/realesrgan-ncnn-vulkan"),
-    Path("/app/models/CodeFormer/inference_codeformer.py"),
 ]
 
 def check_binary(name, cmd):
@@ -267,109 +264,7 @@ def generate_subtitles(
         raise gr.Error(f"Transcription failed: {str(e)}")
 ```
 
-### **Video Restoration Pattern (with proper frame handling)**
-```python
-def restore_video(video_file, target_res, upscale_model, tile_size, face_weight, enable_face, progress=gr.Progress()):
-    flush_vram()
-    
-    if not video_file or not Path(video_file).exists():
-        raise gr.Error("Please upload a video file.")
-    
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    frames_dir = TEMP_DIR / f"frames_{ts}"
-    upscaled_dir = TEMP_DIR / f"upscaled_{ts}"
-    
-    try:
-        frames_dir.mkdir(parents=True, exist_ok=True)
-        upscaled_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 1. Probe video
-        progress(0.05, desc="Analyzing video...")
-        probe = subprocess.run([
-            "ffprobe", "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=r_frame_rate,width,height", "-of", "json", video_file
-        ], capture_output=True, text=True, check=True)
-        info = json.loads(probe.stdout)["streams"][0]
-        fps_num, fps_den = map(int, info["r_frame_rate"].split("/"))
-        fps = fps_num / fps_den
-        input_height = int(info["height"])
-        
-        # 2. Extract frames
-        progress(0.1, desc="Extracting frames...")
-        subprocess.run([
-            "ffmpeg", "-y", "-i", video_file, "-qscale:v", "1",
-            str(frames_dir / "frame_%08d.png")
-        ], capture_output=True, check=True)
-        
-        frame_count = len(list(frames_dir.glob("*.png")))
-        if frame_count == 0:
-            raise gr.Error("Failed to extract frames from video.")
-        
-        # 3. Calculate scale
-        target_height = 2160 if target_res == "4K" else 1080
-        scale = max(2, min(4, (target_height // input_height) or 2))
-        
-        # 4. Upscale
-        progress(0.25, desc=f"Upscaling {frame_count} frames...")
-        if not REALESRGAN_BIN.exists():
-            raise gr.Error(f"Real-ESRGAN not found at {REALESRGAN_BIN}")
-        
-        result = subprocess.run([
-            str(REALESRGAN_BIN), "-i", str(frames_dir), "-o", str(upscaled_dir),
-            "-s", str(scale), "-n", upscale_model, "-t", str(tile_size), "-f", "png"
-        ], capture_output=True, text=True)
-        
-        if result.returncode != 0:
-            raise gr.Error(f"Real-ESRGAN failed: {result.stderr}")
-        
-        # 5. Verify output
-        upscaled_frames = sorted(upscaled_dir.glob("*.png"))
-        if not upscaled_frames:
-            raise gr.Error("Upscaling produced no output frames.")
-        
-        final_dir = upscaled_dir
-        
-        # 6. Face restoration (optional)
-        if enable_face and face_weight > 0 and CODEFORMER_DIR.exists():
-            progress(0.6, desc="Restoring faces...")
-            # ... CodeFormer subprocess ...
-        
-        # 7. Encode video
-        progress(0.8, desc="Encoding video...")
-        output_path = OUTPUT_DIR / f"{Path(video_file).stem}_restored_{ts}.mp4"
-        
-        encode_cmd = [
-            "ffmpeg", "-y", "-framerate", str(fps),
-            "-i", str(final_dir / "frame_%08d.png"),
-            "-i", video_file, "-map", "0:v:0", "-map", "1:a:0?",
-            "-c:a", "aac", "-b:a", "192k"
-        ]
-        
-        if HAS_NVENC:
-            encode_cmd.extend(["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "20"])
-        else:
-            encode_cmd.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18"])
-        
-        encode_cmd.extend(["-movflags", "+faststart", str(output_path)])
-        subprocess.run(encode_cmd, capture_output=True, check=True)
-        
-        progress(1.0, desc="Complete!")
-        return str(output_path), str(output_path)
-        
-    except gr.Error:
-        raise
-    except subprocess.CalledProcessError as e:
-        raise gr.Error(f"Processing failed: {e.stderr.decode() if e.stderr else str(e)}")
-    except Exception as e:
-        raise gr.Error(f"Video restoration failed: {str(e)}")
-    finally:
-        # ALWAYS clean up temp files
-        shutil.rmtree(frames_dir, ignore_errors=True)
-        shutil.rmtree(upscaled_dir, ignore_errors=True)
-        flush_vram()
-```
-
-### **Subtitle Burning (CORRECT gr.File handling)**
+### **Subtitle Transcription & Tools**
 ```python
 def burn_subtitles(video, subtitle_file, font_size, progress=gr.Progress()):
     flush_vram()
@@ -415,14 +310,7 @@ with gr.Blocks(
 - Big primary button: "Generate Subtitles"
 - Show `progress=gr.Progress()` during processing
 
-### **Tab 2: Visual Restoration**
-- 2-column layout
-- `gr.Video(sources=["upload"])`
-- `gr.Radio(["1080p", "4K"])` for target resolution
-- `gr.Accordion("Tweak Upscaler", open=False)` for tile size, face settings
-- Video preview and download on right
-
-### **Tab 3: Toolbox**
+### **Tab 2: Toolbox**
 - Nested `gr.Tabs()` inside for: Burn Subtitles, Convert, Extract Audio
 - Each sub-tab has 2-column layout
 - For subtitle file upload: `gr.File(file_types=[".srt", ".ass", ".vtt"])`

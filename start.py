@@ -30,7 +30,6 @@ STORAGE_DIR = Path("/workspace") if Path("/workspace").exists() else BASE_DIR
 
 MODELS_DIR = STORAGE_DIR / "models"
 BIN_DIR = STORAGE_DIR / "bin"
-CODEFORMER_DIR = MODELS_DIR / "CodeFormer"
 
 REQUIRED_BINARIES = [
     ("ffmpeg", ["ffmpeg", "-version"]),
@@ -38,13 +37,9 @@ REQUIRED_BINARIES = [
 ]
 
 OPTIONAL_BINARIES = [
-    ("df-enhance", ["df-enhance", "--help"]),
 ]
 
 REQUIRED_PATHS = [
-    (BIN_DIR / "realesrgan-ncnn-vulkan", "Real-ESRGAN binary"),
-    (BIN_DIR / "models", "Real-ESRGAN models"),
-    (CODEFORMER_DIR / "inference_codeformer.py", "CodeFormer"),
 ]
 
 
@@ -55,143 +50,6 @@ def _run(cmd, *, cwd: Path | None = None, timeout: int | None = None):
         check=True,
         timeout=timeout,
     )
-
-
-def safe_move(src, dst):
-    """Move a file or directory atomically across filesystems."""
-    import shutil
-    from pathlib import Path
-    src = Path(src)
-    dst = Path(dst)
-    if not src.exists():
-        return
-    try:
-        # Try atomic rename first
-        src.rename(dst)
-    except OSError:
-        # Fallback for cross-filesystem move
-        if src.is_dir():
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
-            shutil.rmtree(src)
-        else:
-            shutil.copy2(src, dst)
-            src.unlink()
-
-
-def ensure_realesrgan_binary(base_dir: Path) -> None:
-    target = base_dir / "bin" / "realesrgan-ncnn-vulkan"
-    models_dir = base_dir / "bin" / "models"
-    if target.exists() and models_dir.exists():
-        return
-
-    bin_dir = target.parent
-    bin_dir.mkdir(parents=True, exist_ok=True)
-
-    zip_name = "realesrgan-ncnn-vulkan-v0.2.0-ubuntu.zip"
-    url = (
-        "https://github.com/xinntao/Real-ESRGAN-ncnn-vulkan/releases/download/v0.2.0/"
-        + zip_name
-    )
-    zip_path = bin_dir / zip_name
-
-    logger.info("  ⏬ Downloading Real-ESRGAN binary...")
-    try:
-        try:
-            _run([
-                "curl",
-                "-L",
-                "-f",
-                "--retry",
-                "3",
-                "--retry-delay",
-                "2",
-                "-o",
-                str(zip_path),
-                url,
-            ], timeout=600)
-        except Exception:
-            _run(["wget", "-q", "-O", str(zip_path), url], timeout=600)
-        _run(["unzip", "-o", str(zip_path)], cwd=bin_dir, timeout=600)
-
-        # The zip extracts into a subfolder (e.g. realesrgan-ncnn-vulkan-v0.2.0-ubuntu/)
-        # so we need to locate the contents and move them into the bin directory.
-        extracted_dirs = [p for p in bin_dir.glob("realesrgan-ncnn-vulkan-*") if p.is_dir()]
-        if not extracted_dirs:
-            # Fallback: search for the binary specifically
-            binaries = list(bin_dir.glob("**/realesrgan-ncnn-vulkan"))
-            binaries = [p for p in binaries if p.is_file() and p.name == "realesrgan-ncnn-vulkan"]
-            if binaries:
-                src_parent = binaries[0].parent
-            else:
-                raise RuntimeError(f"Real-ESRGAN unzip completed but contents not found in {bin_dir}")
-        else:
-            src_parent = extracted_dirs[0]
-
-        # Move all contents (binary, models folder, etc.) to bin_dir
-        for item in src_parent.iterdir():
-            dest = bin_dir / item.name
-            if dest.resolve() == item.resolve():
-                continue
-            if dest.exists():
-                if dest.is_dir():
-                    shutil.rmtree(dest, ignore_errors=True)
-                else:
-                    dest.unlink(missing_ok=True)
-            safe_move(item, dest)
-
-        # Cleanup the now-empty extracted folder
-        if src_parent.exists() and src_parent != bin_dir:
-            shutil.rmtree(src_parent, ignore_errors=True)
-
-        _run(["chmod", "+x", str(target)], timeout=30)
-    finally:
-        try:
-            zip_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-    if not target.exists():
-        raise RuntimeError(f"Real-ESRGAN binary install failed; expected at {target}")
-    logger.info("  ✓ Real-ESRGAN ready")
-
-
-def ensure_codeformer_repo(base_dir: Path) -> None:
-    repo_dir = base_dir / "CodeFormer"
-    marker = repo_dir / "inference_codeformer.py"
-    if marker.exists():
-        return
-
-    logger.info("  ⏬ Cloning CodeFormer repository...")
-    try:
-        if repo_dir.exists():
-            # If the directory exists but is incomplete/corrupt, remove it.
-            # This keeps startup idempotent and avoids half-installed repos.
-            import shutil
-
-            shutil.rmtree(repo_dir, ignore_errors=True)
-
-        _run(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "https://github.com/sczhou/CodeFormer.git",
-                str(repo_dir),
-            ],
-            timeout=600,
-        )
-    except Exception as e:
-        raise RuntimeError(f"Failed to clone CodeFormer: {e}")
-
-    if not marker.exists():
-        raise RuntimeError(
-            "CodeFormer clone completed but expected entrypoint is missing: "
-            f"{marker}"
-        )
-    logger.info("  ✓ CodeFormer repo ready")
 
 
 def check_binary(name, cmd):
@@ -264,14 +122,6 @@ def main():
             logger.error(f"  ✗ {name} - REQUIRED")
             errors.append(name)
     
-    # Check optional binaries
-    for name, cmd in OPTIONAL_BINARIES:
-        if check_binary(name, cmd):
-            logger.info(f"  ✓ {name}")
-        else:
-            logger.warning(f"  ⚠ {name} - optional, feature disabled")
-            warnings.append(name)
-    
     # Summary
     logger.info("=" * 55)
     
@@ -280,23 +130,6 @@ def main():
         logger.error("Please install missing dependencies and try again.")
         sys.exit(1)
     
-    # Slim image strategy: acquire heavyweight runtime assets at pod startup.
-    try:
-        ensure_realesrgan_binary(STORAGE_DIR)
-        ensure_codeformer_repo(MODELS_DIR)
-    except Exception as e:
-        logger.error(f"FATAL: {e}")
-        sys.exit(1)
-
-    # Now check required paths after asset acquisition
-    logger.info("[AI Models & Tools]")
-    for path, desc in REQUIRED_PATHS:
-        if path.exists():
-            logger.info(f"  ✓ {desc}")
-        else:
-            logger.warning(f"  ⚠ {desc} not found at {path}")
-            warnings.append(desc)
-
     # Option 2: download models on first run if missing
     try:
         ensure_models_downloaded()
