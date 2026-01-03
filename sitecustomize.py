@@ -16,7 +16,7 @@ try:
 except (ImportError, Exception):
     pass
 
-# 3. FIX: NumPy 2.0 compatibility patch for legacy libraries
+# 3. FIX: NumPy compatibility patch for legacy libraries
 try:
     import numpy as np
     # Many older libraries (BasicSR, GFPGAN) use these removed aliases
@@ -32,8 +32,7 @@ try:
         np.object = object
 except ImportError:
     pass
-
 except Exception as e:
-    print(f"[UMS] Warning: Failed to patch NumPy/BasicSR: {e}")
+    print(f"[UMS] Warning: Failed to patch NumPy: {e}")
 
 print("[UMS] sitecustomize.py loaded successfully.")

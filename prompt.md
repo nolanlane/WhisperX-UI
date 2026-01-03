@@ -487,7 +487,7 @@ lpips==0.1.4
 einops==0.7.0
 
 # Core Utilities
-numpy>=2.0.2
+numpy>=1.24.4,<2.0.0
 scipy>=1.12.0
 Pillow>=10.2.0
 tqdm>=4.66.2
