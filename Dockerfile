@@ -3,7 +3,7 @@
 # Optimized for RunPod with NVIDIA GPU support
 # =============================================================================
 
-FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04 AS builder
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -89,10 +89,10 @@ WORKDIR /app
 # Copy requirements first for layer caching
 COPY requirements.txt .
 
-# Install PyTorch with CUDA 12.1 support (using uv for speed)
+# Install PyTorch with CUDA 12.8 support (using uv for speed)
 # Updated to match WhisperX 3.7.4 requirements (torchaudio>=2.8.0)
 RUN uv pip install --system torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 \
-    --index-url https://download.pytorch.org/whl/cu121
+    --index-url https://download.pytorch.org/whl/cu128
 
 # Install remaining Python dependencies
 RUN uv pip install --system -r requirements.txt
@@ -102,7 +102,7 @@ RUN uv pip install --system -r requirements.txt
 # =============================================================================
 COPY download_models.py start.py app.py sitecustomize.py ./
 
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04 AS runtime
+FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=UTC
@@ -154,7 +154,7 @@ COPY --from=builder /app/app.py /app/app.py
 COPY --from=builder /app/sitecustomize.py /app/sitecustomize.py
 
 ENV PATH="/app/bin:${PATH}"
-ENV PYTHONPATH="/app:${PYTHONPATH}"
+ENV PYTHONPATH="/app${PYTHONPATH:+:${PYTHONPATH}}"
 
 RUN mkdir -p /app/models/whisper \
     /app/models/huggingface \

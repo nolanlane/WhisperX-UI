@@ -16,7 +16,24 @@ try:
 except (ImportError, Exception):
     pass
 
-# 3. FIX: Patch gradio_client for compatibility with schemas using additionalProperties: True
+# 3. FIX: NumPy 2.0 compatibility patch for legacy libraries
+try:
+    import numpy as np
+    # Many older libraries (BasicSR, GFPGAN) use these removed aliases
+    if not hasattr(np, 'float'):
+        np.float = float
+    if not hasattr(np, 'int'):
+        np.int = int
+    if not hasattr(np, 'bool'):
+        np.bool = bool
+    if not hasattr(np, 'complex'):
+        np.complex = complex
+    if not hasattr(np, 'object'):
+        np.object = object
+except ImportError:
+    pass
+
+# 4. FIX: Patch gradio_client for compatibility with schemas using additionalProperties: True
 # This fixes crashes in gradio 4.44.1 when schemas contain boolean values (True/False)
 try:
     # Handle different import locations/versions safely

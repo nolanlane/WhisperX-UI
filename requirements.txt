@@ -1,6 +1,6 @@
 # =============================================================================
 # Universal Media Studio - Requirements
-# Pinned for stability on RunPod with CUDA 12.1
+# Pinned for stability on RunPod with CUDA 12.8
 # =============================================================================
 
 # WhisperX and dependencies
