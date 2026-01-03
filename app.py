@@ -38,6 +38,9 @@ STORAGE_DIR = Path("/workspace") if Path("/workspace").exists() else BASE_DIR
 
 MODELS_DIR = STORAGE_DIR / "models"
 WHISPER_DIR = MODELS_DIR / "whisper"
+HF_HOME = MODELS_DIR / "huggingface"
+NLTK_HOME = MODELS_DIR / "nltk"
+TORCH_HOME = MODELS_DIR / "torch"
 OUTPUT_DIR = STORAGE_DIR / "outputs"
 TEMP_DIR = STORAGE_DIR / "temp"
 BIN_DIR = STORAGE_DIR / "bin"
@@ -47,9 +50,9 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # Set environment variables BEFORE importing heavy libraries
 os.environ["PYTHONPATH"] = f"{BASE_DIR}:{os.environ.get('PYTHONPATH', '')}"
-os.environ["HF_HOME"] = str(MODELS_DIR / "huggingface")
-os.environ["NLTK_DATA"] = str(MODELS_DIR / "nltk")
-os.environ["TORCH_HOME"] = str(MODELS_DIR / "torch")
+os.environ["HF_HOME"] = str(HF_HOME)
+os.environ["NLTK_DATA"] = str(NLTK_HOME)
+os.environ["TORCH_HOME"] = str(TORCH_HOME)
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 # Ensure Gradio uses the persistent temp directory
 os.environ["GRADIO_TEMP_DIR"] = str(TEMP_DIR)
@@ -69,10 +72,13 @@ def clear_model_cache():
         WHISPER_DIR,
         MODELS_DIR / "whisper", 
         MODELS_DIR / "alignment",
+        MODELS_DIR / "huggingface",
+        MODELS_DIR / "torch",
+        MODELS_DIR / "nltk",
         Path.home() / ".cache" / "whisper",
         Path.home() / ".cache" / "huggingface", 
         Path.home() / ".cache" / "whisperx",
-        Path.home() / ".cache" / "torch" / "hub",
+        Path.home() / ".cache" / "torch",
         Path("/tmp/whisperx")
     ]
     
@@ -88,9 +94,18 @@ def clear_model_cache():
             except Exception as e:
                 logger.warning(f"  Failed to remove {cache_dir}: {e}")
     
+    # Specifically target the VAD model file if it survived in TORCH_HOME
+    vad_file = TORCH_HOME / "whisperx-vad-segmentation.bin"
+    if vad_file.exists():
+        logger.info(f"  Removing VAD model file: {vad_file}")
+        vad_file.unlink(missing_ok=True)
+
     # Recreate essential directories
     WHISPER_DIR.mkdir(parents=True, exist_ok=True)
     (MODELS_DIR / "alignment").mkdir(parents=True, exist_ok=True)
+    (MODELS_DIR / "huggingface").mkdir(parents=True, exist_ok=True)
+    (MODELS_DIR / "torch").mkdir(parents=True, exist_ok=True)
+    (MODELS_DIR / "nltk").mkdir(parents=True, exist_ok=True)
     
     logger.info("✅ Cache clearing completed")
 
@@ -252,23 +267,19 @@ def generate_subtitles(
             model = _load_model()
         except Exception as e:
             err_msg = str(e).lower()
-            if "sha256" in err_msg or "checksum" in err_msg:
-                logger.warning(f"Checksum mismatch for {model_size}. Clearing all model caches and retrying...")
+            if "sha256" in err_msg or "checksum" in err_msg or "vad" in err_msg:
+                logger.warning(f"Model/VAD loading failed (checksum/corrupt). Clearing caches and retrying...")
                 clear_model_cache()
                 
-                # Retry with force reload
+                # Retry
                 try:
+                    import time
+                    time.sleep(2)
                     model = _load_model()
                     logger.info("✅ Model loaded successfully after cache clear")
                 except Exception as retry_e:
-                    if "sha256" in str(retry_e).lower() or "checksum" in str(retry_e).lower():
-                        # Second retry with different approach
-                        logger.warning("Second checksum failure, trying with fresh download...")
-                        import time
-                        time.sleep(2)  # Brief pause
-                        model = _load_model()
-                    else:
-                        raise retry_e
+                    logger.error(f"Retry failed: {retry_e}")
+                    raise retry_e
             else:
                 raise e
 

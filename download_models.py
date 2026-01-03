@@ -5,6 +5,7 @@
 
 import os
 import sys
+import hashlib
 import logging
 import subprocess
 from pathlib import Path
@@ -171,11 +172,22 @@ def download_alignment_models():
         logger.error(f"⚠️ Alignment model download error: {e}")
 
 
+def calculate_sha256(file_path):
+    """Calculate SHA256 hash of a file."""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+
 def download_vad_model():
     """Download Silero VAD model used by WhisperX with checksum resilience."""
     logger.info("=" * 60)
     logger.info("📥 Downloading VAD model...")
     logger.info("=" * 60)
+    
+    EXPECTED_VAD_HASH = "0b5b3216d60a2d32fc086b47ea8c67589aaeb26b7e07fcbe620d6d0b83e209ea"
     
     try:
         import torch
@@ -189,86 +201,65 @@ def download_vad_model():
                 onnx=False
             )
         except Exception as e:
-            if "checksum" in str(e).lower():
-                logger.warning("VAD checksum mismatch. Clearing all caches and retrying with force_reload=True...")
-                clear_all_model_caches()
+            logger.warning(f"Silero VAD Hub load issue: {e}")
+            # Non-fatal, whisperx might still work or download it itself
                 
-                # First retry with force reload
-                try:
-                    torch.hub.load(
-                        repo_or_dir='snakers4/silero-vad',
-                        model='silero_vad',
-                        force_reload=True,
-                        onnx=False
-                    )
-                    logger.info("✅ VAD model loaded successfully after cache clear")
-                except Exception as retry_e:
-                    if "checksum" in str(retry_e).lower():
-                        # Second retry with pause
-                        logger.warning("Second VAD checksum failure, trying with fresh download...")
-                        import time
-                        time.sleep(3)
-                        torch.hub.load(
-                            repo_or_dir='snakers4/silero-vad',
-                            model='silero_vad',
-                            force_reload=True,
-                            onnx=False
-                        )
-                    else:
-                        raise retry_e
-            else:
-                raise e
-                
-        logger.info("✅ Silero VAD model downloaded!")
+        logger.info("✅ Silero VAD model check complete")
         
         # WhisperX specific VAD segmentation model
-        # Fixes 301 Redirect issue with old URL in whisperx < 3.1.2
-        logger.info("  Downloading WhisperX VAD segmentation model...")
+        logger.info("  Verifying WhisperX VAD segmentation model...")
 
-        # This URL is the target of the redirect from the hardcoded EU URL
-        # We manually download it so whisperx doesn't try to use the broken URL
-        # Note: The original eu-west-2 URL is expired, using us-west-2 instead
-        # Fallback to GitHub hosted asset if S3 fails
+        # Target location expected by WhisperX
+        target_path = TORCH_HOME / "whisperx-vad-segmentation.bin"
+
+        # Verify existing file if any
+        if target_path.exists():
+            current_hash = calculate_sha256(target_path)
+            if current_hash == EXPECTED_VAD_HASH:
+                logger.info("  ✓ WhisperX VAD model already exists and is valid.")
+                return
+            else:
+                logger.warning(f"  ⚠️ Hash mismatch for existing VAD model: {current_hash}. Re-downloading...")
+                target_path.unlink()
+
         primary_url = "https://whisperx.s3.us-west-2.amazonaws.com/model_weights/segmentation/0b5b3216d60a2d32fc086b47ea8c67589aaeb26b7e07fcbe620d6d0b83e209ea/pytorch_model.bin"
         fallback_url = "https://github.com/m-bain/whisperX/raw/main/whisperx/assets/pytorch_model.bin"
 
-        # Target location expected by WhisperX
-        # It looks in torch.hub._get_torch_home() -> which maps to os.environ["TORCH_HOME"]
-        target_path = TORCH_HOME / "whisperx-vad-segmentation.bin"
-
-        if not target_path.exists():
-            # Try primary URL first, then fallback
-            urls_to_try = [primary_url, fallback_url]
-            downloaded = False
-            
-            for i, url in enumerate(urls_to_try):
-                try:
-                    logger.info(f"  Trying URL {i+1}/{len(urls_to_try)}: {url}")
-                    # Use curl -L to handle any further redirects robustly
-                    # We use a user-agent to avoid 403s on some S3 setups
-                    result = subprocess.run([
-                        "curl", "-L",
-                        "--user-agent", "Mozilla/5.0 (compatible; WhisperX-UI/1.0)",
-                        "-o", str(target_path),
-                        url
-                    ], check=True, timeout=300)
+        urls_to_try = [primary_url, fallback_url]
+        downloaded = False
+        
+        for i, url in enumerate(urls_to_try):
+            try:
+                logger.info(f"  Trying URL {i+1}/{len(urls_to_try)}: {url}")
+                # Use curl -L -f to handle redirects and 404s
+                result = subprocess.run([
+                    "curl", "-L", "-f",
+                    "--user-agent", "Mozilla/5.0 (compatible; WhisperX-UI/1.0)",
+                    "-o", str(target_path),
+                    url
+                ], check=True, timeout=300)
+                
+                # Verify hash immediately after download
+                new_hash = calculate_sha256(target_path)
+                if new_hash == EXPECTED_VAD_HASH:
                     downloaded = True
-                    logger.info(f"  ✅ Downloaded successfully from URL {i+1}")
+                    logger.info(f"  ✅ Downloaded and verified VAD model from URL {i+1}")
                     break
-                except subprocess.CalledProcessError as e:
-                    logger.warning(f"  ⚠️ URL {i+1} failed: {e}")
-                    if target_path.exists():
-                        target_path.unlink()  # Remove partial download
-                    continue
-            
-            if not downloaded:
-                logger.error("  ❌ All URLs failed for VAD segmentation model")
-                raise RuntimeError("Failed to download VAD segmentation model from all sources")
-        else:
-            logger.info("  ✓ WhisperX VAD segmentation model already exists")
-
+                else:
+                    logger.error(f"  ❌ Hash mismatch for downloaded VAD model from URL {i+1}: {new_hash}")
+                    target_path.unlink()
+            except Exception as e:
+                logger.warning(f"  ⚠️ URL {i+1} failed: {e}")
+                if target_path.exists():
+                    target_path.unlink()
+                continue
+        
+        if not downloaded:
+            logger.error("  ❌ All VAD model download attempts failed or failed verification.")
+            # We don't raise here, whisperx might still try its own internal download
+            # but we've tried our best.
     except Exception as e:
-        logger.error(f"⚠️ VAD model download error: {e}")
+        logger.error(f"⚠️ VAD model download process error: {e}")
 
 
 def main():
