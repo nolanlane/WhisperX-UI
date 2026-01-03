@@ -128,7 +128,7 @@ def download_vad_model():
     try:
         import torch
         
-        # Silero VAD
+        # Silero VAD (standard)
         torch.hub.load(
             repo_or_dir='snakers4/silero-vad',
             model='silero_vad',
@@ -137,6 +137,31 @@ def download_vad_model():
         )
         logger.info("✅ Silero VAD model downloaded!")
         
+        # WhisperX specific VAD segmentation model
+        # Fixes 301 Redirect issue with old URL in whisperx < 3.1.2
+        logger.info("  Downloading WhisperX VAD segmentation model...")
+
+        # This URL is the target of the redirect from the hardcoded EU URL
+        # We manually download it so whisperx doesn't try to use the broken URL
+        url = "https://whisperx.s3.us-west-2.amazonaws.com/model_weights/segmentation/0b5b3216d60a2d32fc086b47ea8c67589aaeb26b7e07fcbe620d6d0b83e209ea/pytorch_model.bin"
+
+        # Target location expected by WhisperX
+        # It looks in torch.hub._get_torch_home() -> which maps to os.environ["TORCH_HOME"]
+        target_path = TORCH_HOME / "whisperx-vad-segmentation.bin"
+
+        if not target_path.exists():
+            # Use curl -L to handle any further redirects robustly
+            # We use a user-agent to avoid 403s on some S3 setups
+            subprocess.run([
+                "curl", "-L",
+                "-A", "Mozilla/5.0",
+                "-o", str(target_path),
+                url
+            ], check=True)
+            logger.info("  ✅ WhisperX VAD segmentation model downloaded!")
+        else:
+            logger.info("  ✓ WhisperX VAD segmentation model already exists")
+
     except Exception as e:
         logger.error(f"⚠️ VAD model download error: {e}")
 
