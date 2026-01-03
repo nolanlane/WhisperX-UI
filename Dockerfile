@@ -100,7 +100,7 @@ RUN uv pip install --system -r requirements.txt
 # =============================================================================
 # Copy Application Files
 # =============================================================================
-COPY download_models.py start.py app.py sitecustomize.py ./
+COPY app.py sitecustomize.py ./
 
 FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04 AS runtime
 
@@ -148,8 +148,6 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-COPY --from=builder /app/download_models.py /app/download_models.py
-COPY --from=builder /app/start.py /app/start.py
 COPY --from=builder /app/app.py /app/app.py
 COPY --from=builder /app/sitecustomize.py /app/sitecustomize.py
 
@@ -174,4 +172,4 @@ HEALTHCHECK --interval=60s --timeout=30s --start-period=300s --retries=3 \
     CMD curl -f http://localhost:7860/ || exit 1
 
 # Run the application via startup validator
-CMD ["python", "start.py"]
+CMD ["python", "app.py"]
